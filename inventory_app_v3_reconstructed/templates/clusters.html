@@ -1,0 +1,323 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">VMware Run:</label>
+        <select id="vmwareRunFilter" class="form-select form-select-sm">
+            <option value="">Latest VMware Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Hyper‑V Run:</label>
+        <select id="hypervRunFilter" class="form-select form-select-sm">
+            <option value="">Latest Hyper‑V Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn" data-platform="all" onclick="setPlatformFilter('all')">All</span>
+            <span class="platform-filter-btn" data-platform="vmware" onclick="setPlatformFilter('vmware')">VMware</span>
+            <span class="platform-filter-btn" data-platform="hyper-v" onclick="setPlatformFilter('hyper-v')">Hyper-V</span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="clusterSearch" class="form-control" placeholder="Search clusters…">
+        </div>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportClusters('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportClusters('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>Cluster</th><th>vCenter</th><th>Datacenter</th>
+                <th>Hosts</th><th>VMs</th><th>CPU Cores</th><th>Total CPU (MHz)</th>
+                <th>CPU Threads</th><th>Used CPU (MHz)</th><th>Free CPU (MHz)</th><th>CPU %</th>
+                <th>Total Mem</th><th>Used Mem</th><th>Free Mem</th><th>Mem %</th>
+                <th>Total Storage</th><th>Used Storage</th><th>Free Storage</th><th>Storage %</th>
+                <th>HA</th><th>DRS</th><th>vSAN</th><th>Storage Type</th>
+                <th>Hosts</th><th>Datastores</th>
+            </tr>
+        </thead>
+        <tbody id="clustersTable">
+            <tr><td colspan="26" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div></td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    let allClusters = [];
+    let currentPlatformFilter = "all";
+    let searchTerm = "";
+    let currentVmwareRunId = "";
+    let currentHypervRunId = "";
+    let currentEnv = "";
+    let envList = []; // split list for multi-selection
+
+    function toNum(v) { return (v === undefined || v === null) ? 0 : parseFloat(v) || 0; }
+    function formatMemoryTB(mb) { let tb = toNum(mb) / (1024*1024); return tb.toFixed(2) + " TB"; }
+    function formatStorageTB(gb) { let tb = toNum(gb) / 1024; return tb.toFixed(2) + " TB"; }
+    function getColor(p) { let n = toNum(p); return n > 90 ? "#dc2626" : n > 70 ? "#f97316" : "#10b981"; }
+
+    function getPlatformIcon(platform) {
+        const p = (platform || '').toLowerCase();
+        if (p === 'vmware') return '<i class="bi bi-server"></i> VMware';
+        if (p === 'hyper-v') return '<i class="bi bi-windows"></i> Hyper-V';
+        return '<i class="bi bi-question-circle"></i> Unknown';
+    }
+
+    function populateEnvSelect() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        // Split comma-separated values into array
+        envList = vcenterParam ? vcenterParam.split(',').map(s => s.trim()).filter(s => s) : [];
+        currentEnv = vcenterParam;
+
+        const envSet = new Set();
+        allClusters.forEach(c => { if (c.vcenter_name) envSet.add(c.vcenter_name); });
+        const select = document.getElementById('envSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">— All Environments —</option>';
+        Array.from(envSet).sort().forEach(env => {
+            const opt = document.createElement('option');
+            opt.value = env;
+            opt.textContent = env;
+            if (envList.length === 1 && env === envList[0]) opt.selected = true;
+            select.appendChild(opt);
+        });
+        if (envList.length > 1) {
+            const opt = document.createElement('option');
+            opt.value = vcenterParam;
+            opt.textContent = "Multiple (" + vcenterParam + ")";
+            opt.selected = true;
+            select.appendChild(opt);
+        } else if (envList.length === 1 && !envSet.has(envList[0])) {
+            const opt = document.createElement('option');
+            opt.value = envList[0];
+            opt.textContent = envList[0] + " (filtered)";
+            opt.selected = true;
+            select.appendChild(opt);
+        }
+    }
+
+    function onEnvChange() {
+        const select = document.getElementById('envSelect');
+        if (!select) return;
+        const newEnv = select.value;
+        const url = new URL(window.location.href);
+        if (newEnv) url.searchParams.set('vcenter', newEnv);
+        else url.searchParams.delete('vcenter');
+        window.location.href = url.toString();
+    }
+
+    window.setPlatformFilter = function(platform) {
+        currentPlatformFilter = platform;
+        document.querySelectorAll('.platform-filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.platform === platform);
+        });
+        renderTable();
+    };
+
+    function filterTable() {
+        searchTerm = document.getElementById('clusterSearch').value.toLowerCase();
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('clustersTable');
+        if (!tbody) return;
+
+        let filtered = allClusters.filter(c => {
+            if (currentPlatformFilter !== 'all') {
+                let p = (c.platform || '').toLowerCase();
+                if (p === 'hyper-v') p = 'hyper-v';
+                if (p !== currentPlatformFilter.toLowerCase()) return false;
+            }
+            // MULTI-SELECTION FIX: check if vcenter_name is in envList
+            if (envList.length > 0) {
+                if (!envList.includes(c.vcenter_name)) return false;
+            }
+            if (searchTerm) {
+                const name = (c.cluster_name || '').toLowerCase();
+                const vc = (c.vcenter_name || '').toLowerCase();
+                const dc = (c.datacenter_name || '').toLowerCase();
+                if (!name.includes(searchTerm) && !vc.includes(searchTerm) && !dc.includes(searchTerm)) return false;
+            }
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="26" class="text-center text-muted py-3">No clusters found</div></td></tr>';
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(c => {
+            const platformIcon = getPlatformIcon(c.platform);
+            const platform = (c.platform || '').toLowerCase();
+            const cpuPerc = toNum(c.cpu_usage_percent);
+            const memPerc = toNum(c.memory_usage_percent);
+            const storPerc = toNum(c.storage_usage_percent);
+            const totalMem = formatMemoryTB(c.total_memory_mb);
+            const usedMem = formatMemoryTB(c.used_memory_mb);
+            const freeMem = formatMemoryTB(c.free_memory_mb || (toNum(c.total_memory_mb) - toNum(c.used_memory_mb)));
+            const totalStor = formatStorageTB(c.total_storage_gb);
+            const usedStor = formatStorageTB(c.used_storage_gb);
+            const freeStor = formatStorageTB(c.free_storage_gb || (toNum(c.total_storage_gb) - toNum(c.used_storage_gb)));
+            const clusterName = c.cluster_name || '-';
+            const runId = platform === 'vmware' ? currentVmwareRunId : currentHypervRunId;
+            const hostsUrl = `/hosts?cluster=${encodeURIComponent(clusterName)}&run_id=${runId}&vcenter=${encodeURIComponent(currentEnv)}`;
+            const dsUrl = `/datastores?cluster=${encodeURIComponent(clusterName)}&run_id=${runId}&vcenter=${encodeURIComponent(currentEnv)}`;
+
+            html += `<tr>
+                <td>${platformIcon}</td>
+                <td><a href="/cluster/${encodeURIComponent(clusterName)}" class="text-primary fw-semibold">${escapeHtml(clusterName)}</a></td>
+                <td>${escapeHtml(c.vcenter_name || '-')}</td>
+                <td>${escapeHtml(c.datacenter_name || '-')}</td>
+                <td>${toNum(c.num_hosts)}</td><td>${toNum(c.num_vms)}</td>
+                <td>${toNum(c.total_cores) || '-'}</td><td>${toNum(c.total_cpu_mhz).toLocaleString()}</td>
+                <td>${toNum(c.num_cpu_threads)}</td><td>${toNum(c.used_cpu_mhz).toLocaleString()}</td>
+                <td>${toNum(c.free_cpu_mhz).toLocaleString()}</td>
+                <td>${cpuPerc.toFixed(1)}%<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(cpuPerc)};" data-target-width="${Math.min(100,cpuPerc)}%"></div></div></td>
+                <td>${totalMem}</td><td>${usedMem}</td><td>${freeMem}</td>
+                <td>${memPerc.toFixed(1)}%<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(memPerc)};" data-target-width="${Math.min(100,memPerc)}%"></div></div></td>
+                <td>${totalStor}</td><td>${usedStor}</td><td>${freeStor}</td>
+                <td>${storPerc.toFixed(1)}%<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(storPerc)};" data-target-width="${Math.min(100,storPerc)}%"></div></div></td>
+                <td>${c.ha_enabled ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle-fill text-danger"></i>'}</td>
+                <td>${c.drs_enabled ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle-fill text-danger"></i>'}</td>
+                <td>${c.vsan_enabled ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle-fill text-danger"></i>'}</td>
+                <td>${escapeHtml(c.storage_type || '-')}</td>
+                <td><a href="${hostsUrl}" class="btn btn-xs btn-outline-primary">Hosts</a></td>
+                <td><a href="${dsUrl}" class="btn btn-xs btn-outline-secondary">Datastores</a></td>
+            </tr>`;
+        });
+        tbody.innerHTML = html;
+        animateProgressBars(tbody);
+    }
+
+    function animateProgressBars(container) {
+        const bars = container.querySelectorAll('.progress-fill-micro[data-target-width]');
+        requestAnimationFrame(() => { requestAnimationFrame(() => { bars.forEach(bar => { bar.style.width = bar.dataset.targetWidth; }); }); });
+    }
+
+    function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, m => { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; return m; }); }
+
+    window.exportClusters = function(fmt) {
+        // Mirror the exact same filter params loadClustersData() uses,
+        // so the export always matches what's currently on screen.
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || "";
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        const params = [];
+        if (vmwareRunId) params.push(`run_id_vmware=${vmwareRunId}`);
+        if (hypervRunId) params.push(`run_id_hyperv=${hypervRunId}`);
+        if (vcenterParam) params.push(`vcenter=${encodeURIComponent(vcenterParam)}`);
+        params.push(`format=${fmt}`);
+        window.location.href = `/api/clusters/export?${params.join('&')}`;
+    };
+
+    function loadVmwareRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const vmSel = document.getElementById("vmwareRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const vmRuns = data.runs.filter(r => r.platform === 'VMware');
+                if (vmSel) {
+                    vmSel.innerHTML = '<option value="">Latest VMware Run</option>';
+                    vmRuns.forEach(run => { vmSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const runId = urlParams.get('run_id_vmware');
+                    if (runId) vmSel.value = runId;
+                    vmSel.onchange = () => loadClustersData();
+                }
+            }
+        }).catch(err => console.error("Failed to load VMware runs:", err));
+    }
+
+    function loadHypervRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const hvSel = document.getElementById("hypervRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const hvRuns = data.runs.filter(r => r.platform === 'Hyper-V');
+                if (hvSel) {
+                    hvSel.innerHTML = '<option value="">Latest Hyper-V Run</option>';
+                    hvRuns.forEach(run => { hvSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const runId = urlParams.get('run_id_hyperv');
+                    if (runId) hvSel.value = runId;
+                    hvSel.onchange = () => loadClustersData();
+                }
+            }
+        }).catch(err => console.error("Failed to load Hyper-V runs:", err));
+    }
+
+    function loadClustersData() {
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || "";
+        currentVmwareRunId = vmwareRunId;
+        currentHypervRunId = hypervRunId;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        // Split comma-separated values for filtering
+        envList = vcenterParam ? vcenterParam.split(',').map(s => s.trim()).filter(s => s) : [];
+        currentEnv = vcenterParam;
+
+        const tbody = document.getElementById("clustersTable");
+        if (tbody) tbody.innerHTML = '<tr><td colspan="26" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading clusters…</div></td></tr>';
+
+        let url = "/api/clusters";
+        const params = [];
+        if (vmwareRunId) params.push(`run_id_vmware=${vmwareRunId}`);
+        if (hypervRunId) params.push(`run_id_hyperv=${hypervRunId}`);
+        if (vcenterParam) params.push(`vcenter=${encodeURIComponent(vcenterParam)}`);
+        if (params.length) url += '?' + params.join('&');
+
+        console.log("Fetching clusters with URL:", url);
+
+        fetch(url).then(res => res.json()).then(data => {
+            if (data.data && Array.isArray(data.data)) allClusters = data.data;
+            else if (Array.isArray(data)) allClusters = data;
+            else allClusters = [];
+            console.log("Clusters loaded:", allClusters.length);
+            // Debug: log first cluster to see vcenter_name
+            if (allClusters.length > 0) {
+                console.log("Sample cluster:", allClusters[0]);
+            }
+            populateEnvSelect();
+            renderTable();
+        }).catch(err => { console.error("Error loading clusters:", err); if (tbody) tbody.innerHTML = '<tr><td colspan="26" class="text-center text-danger py-3">Failed to load clusters</div></td></tr>'; });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const allBtn = document.querySelector('.platform-filter-btn[data-platform="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        const searchInput = document.getElementById('clusterSearch');
+        if (searchInput) searchInput.addEventListener('input', filterTable);
+        const envSelect = document.getElementById('envSelect');
+        if (envSelect) envSelect.addEventListener('change', onEnvChange);
+        Promise.all([loadVmwareRuns(), loadHypervRuns()]).then(() => loadClustersData());
+    });
+</script>
+{% endblock %}

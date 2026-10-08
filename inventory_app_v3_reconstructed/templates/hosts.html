@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">VMware Run:</label>
+        <select id="vmwareRunFilter" class="form-select form-select-sm">
+            <option value="">Latest VMware Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Hyper‑V Run:</label>
+        <select id="hypervRunFilter" class="form-select form-select-sm">
+            <option value="">Latest Hyper‑V Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn" data-platform="all" onclick="setPlatformFilter('all')">All</span>
+            <span class="platform-filter-btn" data-platform="vmware" onclick="setPlatformFilter('vmware')">VMware</span>
+            <span class="platform-filter-btn" data-platform="hyper-v" onclick="setPlatformFilter('hyper-v')">Hyper-V</span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="hostSearch" class="form-control" placeholder="Search hosts…">
+        </div>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportHosts('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportHosts('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>Host Name</th><th>IP</th><th>Vendor</th><th>vCenter</th>
+                <th>Cluster</th><th>Datacenter</th><th>CPU Cores</th><th>CPU Model</th>
+                <th>CPU MHz</th><th>Memory Total (TB)</th><th>Memory Used (TB)</th><th>Memory %</th>
+                <th>ESXi Version</th><th>Power State</th><th>Connection State</th>
+            </tr>
+        </thead>
+        <tbody id="hostsTable">
+            <tr><td colspan="16" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div></td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script>
+    let allHosts = [];
+    let currentPlatformFilter = "all";
+    let searchTerm = "";
+    let currentVmwareRunId = "";
+    let currentHypervRunId = "";
+    let currentEnv = "";
+    let envList = [];
+
+    function toNum(v) { return (v === undefined || v === null) ? 0 : parseFloat(v) || 0; }
+    function formatMemoryTB(gb) { let tb = toNum(gb) / 1024; return tb.toFixed(2) + " TB"; }
+    function getColor(p) { let n = toNum(p); return n > 90 ? "#dc2626" : n > 70 ? "#f97316" : "#10b981"; }
+
+    function getPlatformIcon(platform) {
+        const p = (platform || '').toLowerCase();
+        if (p === 'vmware') return '<i class="bi bi-server"></i> VMware';
+        if (p === 'hyper-v') return '<i class="bi bi-windows"></i> Hyper-V';
+        return '<i class="bi bi-question-circle"></i> Unknown';
+    }
+
+    function populateEnvSelect() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        envList = vcenterParam ? vcenterParam.split(',').map(s => s.trim()).filter(s => s) : [];
+        currentEnv = vcenterParam;
+
+        const envSet = new Set();
+        allHosts.forEach(h => { if (h.vcenter_name) envSet.add(h.vcenter_name); });
+        const select = document.getElementById('envSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">— All Environments —</option>';
+        Array.from(envSet).sort().forEach(env => {
+            const opt = document.createElement('option');
+            opt.value = env;
+            opt.textContent = env;
+            if (envList.length === 1 && env === envList[0]) opt.selected = true;
+            select.appendChild(opt);
+        });
+        if (envList.length > 1) {
+            const opt = document.createElement('option');
+            opt.value = vcenterParam;
+            opt.textContent = "Multiple (" + vcenterParam + ")";
+            opt.selected = true;
+            select.appendChild(opt);
+        } else if (envList.length === 1 && !envSet.has(envList[0])) {
+            const opt = document.createElement('option');
+            opt.value = envList[0];
+            opt.textContent = envList[0] + " (filtered)";
+            opt.selected = true;
+            select.appendChild(opt);
+        }
+    }
+
+    function onEnvChange() {
+        const select = document.getElementById('envSelect');
+        if (!select) return;
+        const newEnv = select.value;
+        const url = new URL(window.location.href);
+        if (newEnv) url.searchParams.set('vcenter', newEnv);
+        else url.searchParams.delete('vcenter');
+        window.location.href = url.toString();
+    }
+
+    window.setPlatformFilter = function(platform) {
+        currentPlatformFilter = platform;
+        document.querySelectorAll('.platform-filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.platform === platform);
+        });
+        renderTable();
+    };
+
+    function filterTable() {
+        searchTerm = document.getElementById('hostSearch').value.toLowerCase();
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('hostsTable');
+        if (!tbody) return;
+
+        let filtered = allHosts.filter(h => {
+            if (currentPlatformFilter !== 'all') {
+                let p = (h.platform || '').toLowerCase();
+                if (p === 'hyper-v') p = 'hyper-v';
+                if (p !== currentPlatformFilter.toLowerCase()) return false;
+            }
+            if (envList.length > 0) {
+                if (!envList.includes(h.vcenter_name)) return false;
+            }
+            if (searchTerm) {
+                const name = (h.host_name || '').toLowerCase();
+                const ip = (h.ip_address || '').toLowerCase();
+                const cluster = (h.cluster_name || '').toLowerCase();
+                const vcenter = (h.vcenter_name || '').toLowerCase();
+                if (!name.includes(searchTerm) && !ip.includes(searchTerm) && !cluster.includes(searchTerm) && !vcenter.includes(searchTerm)) return false;
+            }
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="16" class="text-center text-muted py-3">No hosts found</div></td></tr>';
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(h => {
+            const platformIcon = getPlatformIcon(h.platform);
+            const totalMemGB = toNum(h.memory_total_gb);
+            const usedMemGB = toNum(h.memory_used_gb);
+            const memPercent = totalMemGB > 0 ? (usedMemGB / totalMemGB * 100) : 0;
+            const totalMemTB = formatMemoryTB(totalMemGB);
+            const usedMemTB = formatMemoryTB(usedMemGB);
+            const powerState = h.power_state || '-';
+            const powerIcon = powerState === 'poweredOn' ? '<span class="text-success"><i class="bi bi-power"></i> On</span>' : (powerState === 'poweredOff' ? '<span class="text-danger"><i class="bi bi-power"></i> Off</span>' : powerState);
+            const connState = h.connection_state || '-';
+            const connIcon = connState === 'connected' ? '<span class="text-success"><i class="bi bi-plug"></i> Connected</span>' : (connState === 'disconnected' ? '<span class="text-danger"><i class="bi bi-plug"></i> Disconnected</span>' : connState);
+
+            html += `<tr>
+                <td>${platformIcon}</td>
+                <td><a href="/host/${encodeURIComponent(h.host_name)}" class="text-primary fw-semibold">${escapeHtml(h.host_name)}</a></td>
+                <td>${escapeHtml(h.ip_address || '-')}</td>
+                <td>${escapeHtml(h.vendor || '-')}</td>
+                <td>${escapeHtml(h.vcenter_name || '-')}</td>
+                <td>${escapeHtml(h.cluster_name || '-')}</td>
+                <td>${escapeHtml(h.datacenter_name || '-')}</td>
+                <td>${toNum(h.cpu_cores)}</td>
+                <td>${escapeHtml(h.cpu_model || '-')}</td>
+                <td>${toNum(h.cpu_mhz).toLocaleString()}</td>
+                <td>${totalMemTB}</td>
+                <td>${usedMemTB}</td>
+                <td>${memPercent.toFixed(1)}%<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(memPercent)};" data-target-width="${Math.min(100,memPercent)}%"></div></div></td>
+                <td>${escapeHtml(h.esxi_version || '-')}</td>
+                <td>${powerIcon}</td>
+                <td>${connIcon}</td>
+            </tr>`;
+        });
+        tbody.innerHTML = html;
+        animateProgressBars(tbody);
+    }
+
+    function animateProgressBars(container) {
+        const bars = container.querySelectorAll('.progress-fill-micro[data-target-width]');
+        requestAnimationFrame(() => { requestAnimationFrame(() => { bars.forEach(bar => { bar.style.width = bar.dataset.targetWidth; }); }); });
+    }
+
+    function escapeHtml(str) { if (!str) return ''; return str.replace(/[&<>]/g, m => { if (m === '&') return '&amp;'; if (m === '<') return '&lt;'; if (m === '>') return '&gt;'; return m; }); }
+
+    window.exportHosts = function(fmt) {
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || "";
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        const params = [];
+        if (vmwareRunId) params.push(`run_id_vmware=${vmwareRunId}`);
+        if (hypervRunId) params.push(`run_id_hyperv=${hypervRunId}`);
+        if (vcenterParam) params.push(`vcenter=${encodeURIComponent(vcenterParam)}`);
+        params.push(`format=${fmt}`);
+        window.location.href = `/api/hosts/export?${params.join('&')}`;
+    };
+
+    function loadVmwareRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const vmSel = document.getElementById("vmwareRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const vmRuns = data.runs.filter(r => r.platform === 'VMware');
+                if (vmSel) {
+                    vmSel.innerHTML = '<option value="">Latest VMware Run</option>';
+                    vmRuns.forEach(run => { vmSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const runId = urlParams.get('run_id_vmware');
+                    if (runId) vmSel.value = runId;
+                    vmSel.onchange = () => loadHostsData();
+                }
+            }
+        }).catch(err => console.error("Failed to load VMware runs:", err));
+    }
+
+    function loadHypervRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const hvSel = document.getElementById("hypervRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const hvRuns = data.runs.filter(r => r.platform === 'Hyper-V');
+                if (hvSel) {
+                    hvSel.innerHTML = '<option value="">Latest Hyper-V Run</option>';
+                    hvRuns.forEach(run => { hvSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const runId = urlParams.get('run_id_hyperv');
+                    if (runId) hvSel.value = runId;
+                    hvSel.onchange = () => loadHostsData();
+                }
+            }
+        }).catch(err => console.error("Failed to load Hyper-V runs:", err));
+    }
+
+    function loadHostsData() {
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || "";
+        currentVmwareRunId = vmwareRunId;
+        currentHypervRunId = hypervRunId;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const vcenterParam = urlParams.get('vcenter') || "";
+        envList = vcenterParam ? vcenterParam.split(',').map(s => s.trim()).filter(s => s) : [];
+        currentEnv = vcenterParam;
+
+        const tbody = document.getElementById("hostsTable");
+        if (tbody) tbody.innerHTML = '<tr><td colspan="16" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading hosts…</div></td></tr>';
+
+        let url = "/api/hosts";
+        const params = [];
+        if (vmwareRunId) params.push(`run_id_vmware=${vmwareRunId}`);
+        if (hypervRunId) params.push(`run_id_hyperv=${hypervRunId}`);
+        if (vcenterParam) params.push(`vcenter=${encodeURIComponent(vcenterParam)}`);
+        if (params.length) url += '?' + params.join('&');
+
+        fetch(url).then(res => res.json()).then(data => {
+            if (data.data && Array.isArray(data.data)) allHosts = data.data;
+            else if (Array.isArray(data)) allHosts = data;
+            else allHosts = [];
+            populateEnvSelect();
+            renderTable();
+        }).catch(err => { console.error("Error loading hosts:", err); if (tbody) tbody.innerHTML = '<tr><td colspan="16" class="text-center text-danger py-3">Failed to load hosts</div></td></tr>'; });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const allBtn = document.querySelector('.platform-filter-btn[data-platform="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        const searchInput = document.getElementById('hostSearch');
+        if (searchInput) searchInput.addEventListener('input', filterTable);
+        const envSelect = document.getElementById('envSelect');
+        if (envSelect) envSelect.addEventListener('change', onEnvChange);
+        Promise.all([loadVmwareRuns(), loadHypervRuns()]).then(() => loadHostsData());
+    });
+</script>
+{% endblock %}

@@ -1,0 +1,48 @@
+<div class="card mt-3">
+    <div class="card-header bg-info text-white">
+        <i class="bi bi-graph-up"></i> AI Forecast – Next CPU Usage
+    </div>
+    <div class="card-body" id="aiForecast">
+        <select id="clusterSelect" class="form-select mb-2">
+            <option value="">Select a cluster</option>
+        </select>
+        <div id="forecastResult"></div>
+    </div>
+</div>
+
+<script>
+    // Populate cluster dropdown from existing data
+    function loadClustersForAI() {
+        fetch('/api/clusters?run_id_vmware=' + getCurrentVmwareRun())
+            .then(res => res.json())
+            .then(data => {
+                let select = document.getElementById('clusterSelect');
+                select.innerHTML = '<option value="">Select a cluster</option>';
+                data.forEach(c => {
+                    let opt = document.createElement('option');
+                    opt.value = c.cluster_name;
+                    opt.textContent = `${c.cluster_name} (${c.platform})`;
+                    select.appendChild(opt);
+                });
+            });
+    }
+    
+    document.getElementById('clusterSelect').addEventListener('change', function() {
+        let cluster = this.value;
+        if (!cluster) return;
+        fetch(`/api/ai/predict_cpu/${encodeURIComponent(cluster)}`)
+            .then(res => res.json())
+            .then(data => {
+                let html = `<div class="alert alert-secondary">
+                    <strong>Last 3 readings:</strong> ${data.last_three.join(' → ')}%<br>
+                    <strong>Predicted next CPU usage:</strong> <span class="badge bg-warning">${data.predicted_next_cpu}%</span>
+                </div>`;
+                document.getElementById('forecastResult').innerHTML = html;
+            })
+            .catch(err => {
+                document.getElementById('forecastResult').innerHTML = `<div class="alert alert-danger">${err.message}</div>`;
+            });
+    });
+    
+    loadClustersForAI();
+</script>

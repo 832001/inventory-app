@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">VMware Run:</label>
+        <select id="vmwareRunFilter" class="form-select form-select-sm">
+            <option value="">Latest VMware Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Hyper‑V Run:</label>
+        <select id="hypervRunFilter" class="form-select form-select-sm">
+            <option value="">Latest Hyper‑V Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn" data-platform="all" onclick="setPlatformFilter('all')">All</span>
+            <span class="platform-filter-btn" data-platform="vmware" onclick="setPlatformFilter('vmware')">VMware</span>
+            <span class="platform-filter-btn" data-platform="hyper-v" onclick="setPlatformFilter('hyper-v')">Hyper-V</span>
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="vmSearch" class="form-control" placeholder="Search VMs…">
+        </div>
+        <button class="btn btn-success btn-sm" onclick="exportTableToCSV()">
+            <i class="bi bi-download me-1"></i>Export CSV
+        </button>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>VM Name</th><th>vCenter</th><th>CPU</th>
+                <th>RAM (GB)</th><th>OS</th><th>IP Address</th><th>Total Disk (GB)</th>
+            </tr>
+        </thead>
+        <tbody id="dsVMsTable">
+            <tr><td colspan="8" class="text-center text-muted py-3">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading VMs…
+             '</td>'+
+        </tbody>
+    </table>
+</div>
+
+<script>
+    let allVMs = [];
+    let currentPlatformFilter = "all";
+    let searchTerm = "";
+    let currentVmwareRunId = "";
+    let currentHypervRunId = "";
+    let currentDatastore = "";
+    let currentCluster = "";
+
+    function toNum(v) { return (v === undefined || v === null) ? 0 : parseFloat(v) || 0; }
+    function formatRam(mb) { return (toNum(mb) / 1024).toFixed(1) + " GB"; }
+
+    window.setPlatformFilter = function(platform) {
+        currentPlatformFilter = platform;
+        document.querySelectorAll('.platform-filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.platform === platform);
+        });
+        renderTable();
+    };
+
+    function filterTable() {
+        searchTerm = document.getElementById('vmSearch').value.toLowerCase();
+        renderTable();
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('dsVMsTable');
+        if (!tbody) return;
+
+        let filtered = allVMs.filter(vm => {
+            if (currentPlatformFilter !== 'all') {
+                let vmPlatform = (vm.platform || '').toLowerCase();
+                if (vmPlatform === 'hyper-v') vmPlatform = 'hyper-v';
+                if (vmPlatform !== currentPlatformFilter.toLowerCase()) return false;
+            }
+            if (searchTerm) {
+                const name = (vm.vm_name || '').toLowerCase();
+                const ip = (vm.ip_address || '').toLowerCase();
+                const os = (vm.os || '').toLowerCase();
+                if (!name.includes(searchTerm) && !ip.includes(searchTerm) && !os.includes(searchTerm)) return false;
+            }
+            return true;
+        });
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No VMs found for this datastore.</div></td></tr>';
+            return;
+        }
+
+        let html = '';
+        filtered.forEach(vm => {
+            const platform = (vm.platform || '').toLowerCase();
+            const platformIcon = platform === 'vmware' ? '<i class="bi bi-server"></i> VMware' : '<i class="bi bi-windows"></i> Hyper-V';
+            const vmName = vm.vm_name || '-';
+            const vmLink = `/vm/${encodeURIComponent(vmName)}`;
+            html += `<tr>
+                <td>${platformIcon}</td>
+                <td><a href="${vmLink}" class="text-primary fw-semibold">${escapeHtml(vmName)}</a></td>
+                <td>${escapeHtml(vm.vcenter_name || '-')}</td>
+                <td>${toNum(vm.cpu)}</a></td>
+                <td>${formatRam(vm.ram_mb)}</a></td>
+                <td>${escapeHtml(vm.os || '-')}</a></td>
+                <td>${escapeHtml(vm.ip_address || '-')}</a></td>
+                <td>${toNum(vm.total_disk_gb).toFixed(1)} GB</a></td>
+            </tr>`;
+        });
+        tbody.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, m => {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    window.exportTableToCSV = function() {
+        let filtered = allVMs.filter(vm => {
+            if (currentPlatformFilter !== 'all') {
+                let vmPlatform = (vm.platform || '').toLowerCase();
+                if (vmPlatform === 'hyper-v') vmPlatform = 'hyper-v';
+                if (vmPlatform !== currentPlatformFilter.toLowerCase()) return false;
+            }
+            if (searchTerm) {
+                const name = (vm.vm_name || '').toLowerCase();
+                const ip = (vm.ip_address || '').toLowerCase();
+                const os = (vm.os || '').toLowerCase();
+                if (!name.includes(searchTerm) && !ip.includes(searchTerm) && !os.includes(searchTerm)) return false;
+            }
+            return true;
+        });
+        if (!filtered.length) { alert("No data to export"); return; }
+
+        let csv = [["Platform","VM Name","vCenter","CPU","RAM (GB)","OS","IP Address","Total Disk (GB)"]];
+        filtered.forEach(vm => {
+            const platform = (vm.platform || '').toLowerCase() === 'vmware' ? 'VMware' : 'Hyper-V';
+            csv.push([
+                platform,
+                vm.vm_name || '-',
+                vm.vcenter_name || '-',
+                toNum(vm.cpu),
+                formatRam(vm.ram_mb),
+                vm.os || '-',
+                vm.ip_address || '-',
+                toNum(vm.total_disk_gb).toFixed(1)
+            ]);
+        });
+        const blob = new Blob([csv.map(r => r.join(",")).join("\n")], { type: "text/csv" });
+        const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "datastore_vms_export.csv"; link.click(); URL.revokeObjectURL(link.href);
+    };
+
+    function loadVmwareRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const vmSel = document.getElementById("vmwareRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const vmRuns = data.runs.filter(r => r.platform === 'VMware');
+                if (vmSel) {
+                    vmSel.innerHTML = '<option value="">Latest VMware Run</option>';
+                    vmRuns.forEach(run => { vmSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    vmSel.onchange = () => loadDatastoreVMs();
+                }
+            }
+        }).catch(err => console.error("Failed to load VMware runs:", err));
+    }
+
+    function loadHypervRuns() {
+        return fetch("/api/unified/runs").then(res => res.json()).then(data => {
+            const hvSel = document.getElementById("hypervRunFilter");
+            if (data.runs && Array.isArray(data.runs)) {
+                const hvRuns = data.runs.filter(r => r.platform === 'Hyper-V');
+                if (hvSel) {
+                    hvSel.innerHTML = '<option value="">Latest Hyper-V Run</option>';
+                    hvRuns.forEach(run => { hvSel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`; });
+                    hvSel.onchange = () => loadDatastoreVMs();
+                }
+            }
+        }).catch(err => console.error("Failed to load Hyper-V runs:", err));
+    }
+
+    function loadDatastoreVMs() {
+        const urlParams = new URLSearchParams(window.location.search);
+        currentDatastore = urlParams.get('datastore');
+        currentCluster = urlParams.get('cluster');
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || urlParams.get('run_id_vmware') || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || urlParams.get('run_id_hyperv') || "";
+        currentVmwareRunId = vmwareRunId;
+        currentHypervRunId = hypervRunId;
+
+        if (!currentDatastore) {
+            document.getElementById("dsVMsTable").innerHTML = '<tr><td colspan="8" class="text-center text-danger">No datastore specified<\/td><\/tr>';
+            return;
+        }
+
+        let url = `/api/datastore_vms?datastore=${encodeURIComponent(currentDatastore)}&cluster=${encodeURIComponent(currentCluster || '')}`;
+        if (vmwareRunId) url += `&run_id_vmware=${vmwareRunId}`;
+        if (hypervRunId) url += `&run_id_hyperv=${hypervRunId}`;
+
+        fetch(url)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) allVMs = data;
+                else allVMs = [];
+                renderTable();
+            })
+            .catch(err => {
+                console.error("Error loading datastore VMs:", err);
+                document.getElementById("dsVMsTable").innerHTML = '<tr><td colspan="8" class="text-center text-danger">Failed to load VMs<\/td><\/tr>';
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const allBtn = document.querySelector('.platform-filter-btn[data-platform="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        const searchInput = document.getElementById('vmSearch');
+        if (searchInput) searchInput.addEventListener('input', filterTable);
+
+        Promise.all([loadVmwareRuns(), loadHypervRuns()]).then(() => {
+            loadDatastoreVMs();
+        });
+    });
+</script>
+{% endblock %}

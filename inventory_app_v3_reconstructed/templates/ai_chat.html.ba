@@ -1,0 +1,1431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat - Infra Assistant</title>
+    <link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+        :root {
+            --bg: #f5f6fa;
+            --bg2: #ffffff;
+            --bg3: #f0f1f7;
+            --border: #e2e4ee;
+            --border2: #d0d3e4;
+            --accent: #3b6ef8;
+            --accent2: #22c55e;
+            --warn: #f59e0b;
+            --red: #ef4444;
+            --text: #1a1d2e;
+            --text2: #4b5068;
+            --muted: #8b91a8;
+            --shadow: 0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.05);
+            --shadow2: 0 4px 12px rgba(0,0,0,.08);
+            --mono: 'DM Mono', monospace;
+            --sans: 'DM Sans', sans-serif;
+            --user-bg: #eff4ff;
+            --user-border: #c7d7fd;
+            --ai-bg: #ffffff;
+        }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html,
+        body {
+            height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+        }
+        .ai-shell {
+            display: flex;
+            height: calc(100vh - 56px);
+            overflow: hidden;
+        }
+
+        /* ── Sidebar ── */
+        .ai-sb {
+            width: 220px;
+            background: var(--bg2);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            padding: 12px;
+            gap: 1px;
+            flex-shrink: 0;
+            box-shadow: var(--shadow);
+        }
+        .sb-logo {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            padding: 4px 4px 14px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 10px;
+        }
+        .sb-logo-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent) 0%, #6c8ef9 100%);
+            border-radius: 9px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(59, 110, 248, .3);
+        }
+        .sb-logo-name {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .sb-logo-sub {
+            font-size: 10px;
+            color: var(--muted);
+        }
+        .sb-lbl {
+            font-size: 10px;
+            color: var(--muted);
+            padding: 10px 6px 3px;
+            letter-spacing: .07em;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .sb-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px;
+            border-radius: 7px;
+            font-size: 13px;
+            color: var(--text2);
+            cursor: pointer;
+            transition: all .15s;
+            text-decoration: none;
+            line-height: 1;
+        }
+        .sb-item:hover {
+            background: var(--bg3);
+            color: var(--text);
+        }
+        .sb-item.active {
+            background: var(--user-bg);
+            color: var(--accent);
+            font-weight: 500;
+        }
+        .sb-item .ico {
+            width: 16px;
+            text-align: center;
+            flex-shrink: 0;
+            font-size: 13px;
+        }
+        .sb-badge {
+            margin-left: auto;
+            background: var(--red);
+            color: #fff;
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 8px;
+            font-weight: 600;
+        }
+        .sb-bottom {
+            margin-top: auto;
+            padding-top: 10px;
+            border-top: 1px solid var(--border);
+        }
+
+        /* ── Main ── */
+        .ai-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-width: 0;
+        }
+        .ai-top {
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+            box-shadow: var(--shadow);
+        }
+        .ai-online {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent2);
+            box-shadow: 0 0 6px rgba(34, 197, 94, .5);
+            flex-shrink: 0;
+        }
+        .ai-top-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .ai-top-sub {
+            font-size: 11px;
+            color: var(--muted);
+        }
+        .top-btn {
+            background: transparent;
+            border: 1px solid var(--border2);
+            color: var(--text2);
+            font-size: 11.5px;
+            padding: 5px 11px;
+            border-radius: 7px;
+            cursor: pointer;
+            transition: all .15s;
+            font-family: var(--sans);
+        }
+        .top-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--user-bg);
+        }
+
+        /* ── Cats ── */
+        .ai-cats {
+            display: flex;
+            gap: 5px;
+            padding: 10px 20px 0;
+            flex-shrink: 0;
+            overflow-x: auto;
+            scrollbar-width: none;
+            background: var(--bg2);
+        }
+        .ai-cats::-webkit-scrollbar {
+            display: none;
+        }
+        .ai-cat {
+            font-size: 11.5px;
+            padding: 4px 12px;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            color: var(--muted);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all .15s;
+            flex-shrink: 0;
+            font-family: var(--sans);
+        }
+        .ai-cat.active,
+        .ai-cat:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--user-bg);
+        }
+        .ai-chips {
+            display: flex;
+            gap: 5px;
+            padding: 8px 20px;
+            flex-shrink: 0;
+            overflow-x: auto;
+            scrollbar-width: none;
+            background: var(--bg2);
+            border-bottom: 1px solid var(--border);
+        }
+        .ai-chips::-webkit-scrollbar {
+            display: none;
+        }
+        .chip {
+            font-size: 11.5px;
+            padding: 4px 11px;
+            border-radius: 16px;
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            color: var(--text2);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all .15s;
+            flex-shrink: 0;
+            font-family: var(--sans);
+        }
+        .chip:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+            background: var(--user-bg);
+        }
+
+        /* ── Messages ── */
+        .ai-msgs {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            background: var(--bg);
+        }
+        .ai-msgs::-webkit-scrollbar {
+            width: 4px;
+        }
+        .ai-msgs::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 4px;
+        }
+        .msg {
+            display: flex;
+            gap: 9px;
+            animation: fadeUp .22s ease;
+        }
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .msg.user {
+            flex-direction: row-reverse;
+        }
+        .msg-av {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            margin-top: 2px;
+            box-shadow: var(--shadow);
+        }
+        .msg.ai .msg-av {
+            background: linear-gradient(135deg, var(--accent), #6c8ef9);
+            color: #fff;
+        }
+        .msg.user .msg-av {
+            background: var(--user-bg);
+            border: 1.5px solid var(--user-border);
+        }
+        .bub {
+            max-width: 100%;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            line-height: 1.65;
+            box-shadow: var(--shadow);
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .msg.user .bub {
+            background: var(--user-bg);
+            border: 1px solid var(--user-border);
+            border-radius: 10px 3px 10px 10px;
+            color: var(--text);
+        }
+        .msg.ai .bub {
+            background: var(--ai-bg);
+            border: 1px solid var(--border);
+            border-radius: 3px 10px 10px 10px;
+            color: var(--text);
+        }
+        .msg.err .bub {
+            border-color: #fca5a5;
+            background: #fff5f5;
+        }
+        .bub pre {
+            background: var(--bg3);
+            border: 1px solid var(--border);
+            border-radius: 7px;
+            padding: 10px 13px;
+            margin-top: 8px;
+            font-family: var(--mono);
+            font-size: 11.5px;
+            color: #1e40af;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.7;
+        }
+        .bub strong {
+            font-weight: 600;
+            color: var(--accent);
+        }
+        .ts {
+            font-size: 10px;
+            color: var(--muted);
+            margin-top: 3px;
+            padding: 0 3px;
+        }
+        .msg.user .ts {
+            text-align: right;
+        }
+
+        /* ── Typing ── */
+        .typing-dots {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 0;
+        }
+        .typing-dots span {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--border2);
+            animation: tdot 1.1s infinite;
+        }
+        .typing-dots span:nth-child(2) {
+            animation-delay: .2s;
+        }
+        .typing-dots span:nth-child(3) {
+            animation-delay: .4s;
+        }
+        @keyframes tdot {
+            0%,
+            60%,
+            100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-5px);
+                background: var(--accent);
+            }
+        }
+
+        /* ── Metric cards ── */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(115px, 1fr));
+            gap: 7px;
+            margin-top: 9px;
+        }
+        .mc {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 12px;
+            box-shadow: var(--shadow);
+        }
+        .mc .mv {
+            font-size: 19px;
+            font-weight: 600;
+            color: var(--accent);
+            font-family: var(--mono);
+        }
+        .mc .ml {
+            font-size: 10.5px;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+        .mc.ok .mv {
+            color: var(--accent2);
+        }
+        .mc.warn .mv {
+            color: var(--warn);
+        }
+        .mc.crit .mv {
+            color: var(--red);
+        }
+
+        /* ── Report card ── */
+        .rcard {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            margin-top: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadow2);
+        }
+        .rcard-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 9px 14px;
+            background: var(--bg3);
+            border-bottom: 1px solid var(--border);
+        }
+        .rcard-title {
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .rcard-sub {
+            font-size: 10.5px;
+            color: var(--muted);
+            margin-top: 1px;
+        }
+        .dl-btn {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            background: transparent;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all .15s;
+            font-family: var(--sans);
+            white-space: nowrap;
+        }
+        .dl-btn:hover {
+            background: var(--accent);
+            color: #fff;
+        }
+        .rtw {
+            overflow-x: auto;
+            max-height: 320px;
+            overflow-y: auto;
+            width: 100%;
+        }
+        .rtw::-webkit-scrollbar {
+            width: 3px;
+            height: 3px;
+        }
+        .rtw::-webkit-scrollbar-thumb {
+            background: var(--border2);
+            border-radius: 3px;
+        }
+        table.rt {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: var(--mono);
+            font-size: 11px;
+        }
+        table.rt th {
+            background: var(--bg3);
+            color: var(--text2);
+            padding: 7px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            font-weight: 600;
+        }
+        table.rt td {
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            color: var(--text);
+        }
+        table.rt tr:hover td {
+            background: var(--user-bg);
+        }
+        .bar-w {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .bar-t {
+            flex: 1;
+            height: 5px;
+            background: var(--bg3);
+            border-radius: 3px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            min-width: 40px;
+        }
+        .bar-f {
+            height: 100%;
+            border-radius: 3px;
+        }
+        .bar-f.ok {
+            background: var(--accent2);
+        }
+        .bar-f.warn {
+            background: var(--warn);
+        }
+        .bar-f.crit {
+            background: var(--red);
+        }
+        .tok {
+            font-size: 10.5px;
+            min-width: 36px;
+            text-align: right;
+            color: var(--text2);
+        }
+        .ok-txt {
+            color: var(--accent2);
+            font-weight: 500;
+        }
+        .warn-txt {
+            color: var(--warn);
+            font-weight: 500;
+        }
+        .crit-txt {
+            color: var(--red);
+            font-weight: 500;
+        }
+        .accent-txt {
+            color: var(--accent);
+            font-weight: 500;
+        }
+
+        /* ── VM detail card ── */
+        .vm-detail {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            margin-top: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadow2);
+        }
+        .vm-detail-header {
+            background: var(--user-bg);
+            border-bottom: 1px solid var(--user-border);
+            padding: 9px 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .vm-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .vm-status-dot.on {
+            background: var(--accent2);
+            box-shadow: 0 0 5px rgba(34, 197, 94, .4);
+        }
+        .vm-status-dot.off {
+            background: var(--red);
+        }
+        .vm-status-dot.unk {
+            background: var(--muted);
+        }
+        .vm-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0;
+        }
+        .vm-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 14px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+        .vm-row:last-child {
+            border-bottom: none;
+        }
+        .vm-row .vk {
+            color: var(--muted);
+        }
+        .vm-row .vv {
+            color: var(--text);
+            font-weight: 500;
+            font-family: var(--mono);
+            font-size: 11.5px;
+        }
+
+        /* ── Placement suggestion card ── */
+        .place-card {
+            background: var(--bg2);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            margin-top: 9px;
+            overflow: hidden;
+            box-shadow: var(--shadow2);
+        }
+        .place-header {
+            background: linear-gradient(135deg, var(--user-bg), #f0f4ff);
+            border-bottom: 1px solid var(--user-border);
+            padding: 10px 14px;
+        }
+        .place-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .place-sub {
+            font-size: 11px;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+        .place-item {
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background .15s;
+            cursor: pointer;
+        }
+        .place-item:last-child {
+            border-bottom: none;
+        }
+        .place-item:hover {
+            background: var(--bg3);
+        }
+        .place-rank {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .place-rank.r1 {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .place-rank.r2 {
+            background: #f1f5f9;
+            color: #475569;
+        }
+        .place-rank.r3 {
+            background: #fdf4ff;
+            color: #7e22ce;
+        }
+        .place-score {
+            margin-left: auto;
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--accent);
+            font-family: var(--mono);
+        }
+        .place-bars {
+            display: flex;
+            gap: 4px;
+            margin-top: 4px;
+            flex-wrap: wrap;
+        }
+        .mini-bar-w {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            font-size: 10px;
+            color: var(--muted);
+        }
+        .mini-bar {
+            width: 40px;
+            height: 4px;
+            background: var(--border);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .mini-bar-f {
+            height: 100%;
+            border-radius: 2px;
+        }
+
+        /* ── Empty state ── */
+        .empty {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            text-align: center;
+            padding: 40px 20px;
+        }
+        .empty-icon {
+            width: 64px;
+            height: 64px;
+            background: var(--user-bg);
+            border: 1px solid var(--user-border);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+        }
+        .empty h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        .empty p {
+            font-size: 12.5px;
+            color: var(--muted);
+            max-width: 360px;
+            line-height: 1.6;
+        }
+
+        /* ── Input area ── */
+        .ai-input-area {
+            flex-shrink: 0;
+            border-top: 1px solid var(--border);
+            padding: 11px 20px 13px;
+            background: var(--bg2);
+            box-shadow: 0 -2px 8px rgba(0, 0, 0, .04);
+        }
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+        .model-pill {
+            background: var(--user-bg);
+            border: 1px solid var(--user-border);
+            color: var(--accent);
+            font-size: 10.5px;
+            padding: 2px 8px;
+            border-radius: 5px;
+            font-family: var(--mono);
+            font-weight: 500;
+        }
+        .input-row {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end;
+        }
+        .input-wrap {
+            flex: 1;
+            background: var(--bg);
+            border: 1.5px solid var(--border2);
+            border-radius: 10px;
+            display: flex;
+            align-items: flex-end;
+            padding: 0 12px;
+            transition: border-color .2s;
+            box-shadow: var(--shadow);
+        }
+        .input-wrap:focus-within {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(59, 110, 248, .1);
+        }
+        #questionInput {
+            flex: 1;
+            background: transparent;
+            border: none;
+            outline: none;
+            color: var(--text);
+            font-family: var(--sans);
+            font-size: 13px;
+            padding: 11px 0;
+            resize: none;
+            min-height: 42px;
+            max-height: 120px;
+            overflow-y: auto;
+            line-height: 1.5;
+        }
+        #questionInput::placeholder {
+            color: var(--muted);
+        }
+        .send-btn {
+            background: var(--accent);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            padding: 11px 18px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            height: 42px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--sans);
+            transition: all .15s;
+            flex-shrink: 0;
+            box-shadow: 0 2px 8px rgba(59, 110, 248, .3);
+        }
+        .send-btn:hover {
+            background: #2558e8;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 110, 248, .4);
+        }
+        .send-btn:active {
+            transform: none;
+        }
+        .send-btn:disabled {
+            opacity: .45;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        .hint {
+            font-size: 10.5px;
+            color: var(--muted);
+            margin-top: 6px;
+            padding-left: 2px;
+        }
+
+        /* ── Delta arrows ── */
+        .delta-up {
+            color: var(--accent2);
+            font-weight: bold;
+        }
+        .delta-down {
+            color: var(--red);
+            font-weight: bold;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .ai-sb {
+                width: 60px;
+                padding: 8px;
+            }
+            .ai-sb .sb-logo-name,
+            .ai-sb .sb-logo-sub,
+            .ai-sb .sb-lbl,
+            .ai-sb .sb-item span:not(.ico) {
+                display: none;
+            }
+            .ai-sb .sb-item {
+                justify-content: center;
+                padding: 8px 4px;
+            }
+            .ai-sb .sb-item .ico {
+                font-size: 18px;
+            }
+            .bub {
+                max-width: 92%;
+            }
+            .ai-top-title {
+                font-size: 12px;
+            }
+            .ai-top-sub {
+                font-size: 10px;
+            }
+            .ai-cats {
+                padding: 8px 12px 0;
+            }
+            .ai-chips {
+                padding: 6px 12px;
+            }
+            .ai-msgs {
+                padding: 12px;
+            }
+            .ai-input-area {
+                padding: 8px 12px 10px;
+            }
+            .metrics-grid {
+                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+            }
+            table.rt {
+                font-size: 10px;
+            }
+            table.rt th,
+            table.rt td {
+                padding: 4px 6px;
+            }
+        }
+        @media (max-width: 480px) {
+            .ai-sb {
+                display: none;
+            }
+            .ai-cats .ai-cat {
+                font-size: 10px;
+                padding: 3px 8px;
+            }
+            .chip {
+                font-size: 10px;
+                padding: 3px 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ai-shell">
+
+        <!-- Sidebar -->
+        <div class="ai-sb">
+            <div class="sb-logo">
+                <div class="sb-logo-icon">🤖</div>
+                <div>
+                    <div class="sb-logo-name">Infra Assistant</div>
+                    <div class="sb-logo-sub">VMware &amp; Hyper-V AI</div>
+                </div>
+            </div>
+
+            <a href="/ai_chat" class="sb-item active"><span class="ico">💬</span>AI Chat</a>
+            <a href="/" class="sb-item"><span class="ico">🏠</span>Dashboard</a>
+            <a href="/clusters" class="sb-item"><span class="ico">🖥</span>Clusters</a>
+            <a href="/vms" class="sb-item"><span class="ico">⚙</span>VMs</a>
+            <a href="/hosts" class="sb-item"><span class="ico">🖧</span>Hosts</a>
+            <a href="/datastores" class="sb-item"><span class="ico">💾</span>Datastores</a>
+            <a href="/vcenters" class="sb-item"><span class="ico">🔗</span>vCenters</a>
+
+            <div class="sb-lbl">Quick Reports</div>
+            <div class="sb-item" onclick="sendQ('Generate full infrastructure report')"><span class="ico">📊</span>Full Report</div>
+            <div class="sb-item" onclick="sendQ('Generate cluster CPU report')"><span class="ico">⚡</span>CPU Report</div>
+            <div class="sb-item" onclick="sendQ('Generate cluster memory report')"><span class="ico">🧠</span>Memory Report</div>
+            <div class="sb-item" onclick="sendQ('Generate datastore report')"><span class="ico">💾</span>Datastore Report</div>
+            <div class="sb-item" onclick="sendQ('Generate hosts report')"><span class="ico">🖧</span>Hosts Report</div>
+
+            <div class="sb-lbl">VM Placement</div>
+            <div class="sb-item" onclick="sendQ('Where should I place a 4 vCPU 16GB 100GB VM?')"><span class="ico">🎯</span>Suggest Placement</div>
+
+            <div class="sb-bottom">
+                <div class="sb-item" onclick="clearChat()"><span class="ico">🗑</span>Clear Chat</div>
+                {% if session.get('role') == 'superadmin' %}
+                <div class="sb-item" onclick="trainModels()"><span class="ico">⚙</span>Train ML Models</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Main chat area -->
+        <div class="ai-main">
+            <div class="ai-top">
+                <div class="ai-online"></div>
+                <div>
+                    <div class="ai-top-title">Infra Assistant</div>
+                    <div class="ai-top-sub">VMware &amp; Hyper-V · Direct DB engine · Phi-3 fallback · Cluster comparison</div>
+                </div>
+                <div class="ai-top-right" style="margin-left:auto;display:flex;gap:6px">
+                    <button class="top-btn" onclick="clearChat()">🗑 Clear</button>
+                </div>
+            </div>
+
+            <div class="ai-cats" id="catTabs">
+                <div class="ai-cat active" onclick="setCat(this,'all')">All</div>
+                <div class="ai-cat" onclick="setCat(this,'capacity')">⚡ Capacity</div>
+                <div class="ai-cat" onclick="setCat(this,'vms')">🖥 VMs</div>
+                <div class="ai-cat" onclick="setCat(this,'health')">🧠 Health</div>
+                <div class="ai-cat" onclick="setCat(this,'datastores')">💾 Datastores</div>
+                <div class="ai-cat" onclick="setCat(this,'platform')">🔄 Platforms</div>
+                <div class="ai-cat" onclick="setCat(this,'forecast')">📈 Forecast</div>
+                <div class="ai-cat" onclick="setCat(this,'reports')">📊 Reports</div>
+                <div class="ai-cat" onclick="setCat(this,'placement')">🎯 Placement</div>
+            </div>
+            <div class="ai-chips" id="suggestionsBar"></div>
+
+            <div class="ai-msgs" id="chatMessages">
+                <div class="empty" id="emptyState">
+                    <div class="empty-icon">🤖</div>
+                    <h3>Hello, I'm Infra Assistant</h3>
+                    <p>Ask me anything about your VMware and Hyper-V infrastructure — clusters, VMs, hosts, datastores, or let me suggest the best placement for a new VM.<br><br>
+                        <strong>💡 New:</strong> Compare a cluster between two periods:<br>
+                        <code>compare cluster DWH-D2-C1 between 2026-04-01 and 2026-04-30 vs 2026-05-01 and 2026-05-30</code></p>
+                </div>
+            </div>
+
+            <div class="ai-input-area">
+                <div class="status-row">
+                    <span class="model-pill">Infra Assistant · phi3-local</span>
+                    <span>Direct DB engine active · ML predictions optional</span>
+                </div>
+                <div class="input-row">
+                    <div class="input-wrap">
+                        <textarea id="questionInput" rows="1"
+                        placeholder="Ask anything · e.g. Tell me about VM-prod-01 · Where to place a 4vCPU 16GB VM? · Generate full report · Compare cluster X between date1 and date2 vs date3 and date4"></textarea>
+                    </div>
+                    <button class="send-btn" id="sendBtn" onclick="askQuestion()">
+                        ↗ Ask
+                    </button>
+                </div>
+                <div class="hint">Enter ↵ to send · Shift+Enter for new line · Ask "report" for downloadable tables</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUGG = {
+            all: ['Hello, what can you do?', 'Give me an infrastructure overview', 'How many of all VMs?', 'Which cluster has most free CPU?',
+                'Generate full report', 'Where to place a 4vCPU 16GB VM?',
+                'Compare cluster DWH-D2-C1 between 2026-04-01 and 2026-04-30 vs 2026-05-01 and 2026-05-30'
+            ],
+            capacity: ['Which cluster has the most free CPU?', 'Which cluster has the most free memory?',
+                'Clusters with CPU above 80%', 'Average CPU usage VMware clusters', 'Total free storage across all clusters',
+                'Which cluster is idle?'
+            ],
+            vms: ['How many VMs total?', 'How many VMware VMs?', 'How many Hyper-V VMs?', 'Tell me about VM [name]',
+                'Which cluster has the most VMs?', 'VMs per vCenter', 'List powered off VMs'
+            ],
+            health: ['Infrastructure health summary', 'Clusters high on both CPU and memory', 'Which cluster is healthiest?',
+                'Which clusters are underutilised?', 'Which hosts have the most VMs?'
+            ],
+            datastores: ['Which datastore has the most free space?', 'Datastores less than 10% free',
+                'Datastores used above 90%', 'How many datastores total?', 'Total datastore capacity'
+            ],
+            platform: ['VMware vs Hyper-V comparison', 'Total CPU capacity VMware vs Hyper-V',
+                'Compare VM count between platforms', 'Free memory VMware vs Hyper-V'
+            ],
+            forecast: ['Predict CPU for all clusters', 'Which cluster will hit CPU limit soonest?',
+                'Which clusters are at risk?', 'Show underutilised clusters'
+            ],
+            reports: ['Generate full infrastructure report', 'Generate cluster CPU report', 'Generate cluster memory report',
+                'Generate datastore report', 'Generate hosts report', 'Generate VM report'
+            ],
+            placement: ['Where to place a 4vCPU 16GB 100GB VM?', 'Best cluster for a database VM (8vCPU 32GB)?',
+                'Suggest placement for a 2vCPU 8GB VM on VMware', 'Best Hyper-V cluster for a new VM'
+            ],
+        };
+
+        let currentCat = 'all',
+            isLoading = false;
+
+        function setCat(el, cat) {
+            currentCat = cat;
+            document.querySelectorAll('.ai-cat').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            renderChips();
+        }
+
+        function renderChips() {
+            const bar = document.getElementById('suggestionsBar');
+            bar.innerHTML = '';
+            (SUGG[currentCat] || SUGG.all).forEach(s => {
+                const c = document.createElement('div');
+                c.className = 'chip';
+                c.textContent = s;
+                c.onclick = () => sendQ(s);
+                bar.appendChild(c);
+            });
+        }
+        renderChips();
+
+        function sendQ(q) {
+            document.getElementById('questionInput').value = q;
+            askQuestion();
+        }
+
+        const ta = document.getElementById('questionInput');
+        ta.addEventListener('input', () => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.min(ta.scrollHeight, 120) + 'px';
+        });
+        ta.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault();
+                askQuestion(); }
+        });
+
+        function nowStr() {
+            return new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function esc(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        function addMsg(role, html, isErr = false) {
+            const es = document.getElementById('emptyState');
+            if (es) es.remove();
+            const wrap = document.getElementById('chatMessages');
+            const d = document.createElement('div');
+            d.className = 'msg ' + (isErr ? 'err' : role);
+            d.innerHTML = `<div class="msg-av">${role==='user'?'👤':'🤖'}</div>
+        <div><div class="bub">${html}</div><div class="ts">${nowStr()}</div></div>`;
+            wrap.appendChild(d);
+            wrap.scrollTop = wrap.scrollHeight;
+        }
+
+        function showTyping() {
+            const es = document.getElementById('emptyState');
+            if (es) es.remove();
+            const wrap = document.getElementById('chatMessages');
+            const d = document.createElement('div');
+            d.id = 'typingBubble';
+            d.className = 'msg ai';
+            d.innerHTML =
+                '<div class="msg-av">🤖</div><div><div class="bub"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>';
+            wrap.appendChild(d);
+            wrap.scrollTop = wrap.scrollHeight;
+        }
+
+        function removeTyping() {
+            const t = document.getElementById('typingBubble');
+            if (t) t.remove();
+        }
+
+        function clearChat() {
+            document.getElementById('chatMessages').innerHTML =
+                '<div class="empty" id="emptyState"><div class="empty-icon">🤖</div><h3>Hello, I\'m Infra Assistant</h3><p>Ask me anything about your VMware and Hyper-V infrastructure.</p></div>';
+        }
+
+        function fmt(raw) {
+            if (typeof raw === 'object' && raw !== null) return renderReport(raw);
+            if (typeof raw === 'string') {
+                if (raw.trim().startsWith('{')) { try { return renderReport(JSON.parse(raw)); } catch (e) {} }
+                const e = esc(raw);
+                if (raw.includes('\n')) return `<pre>${e}</pre>`;
+                return e.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            }
+            return esc(String(raw));
+        }
+
+        function renderReport(d) {
+            if (d.type === 'metrics') return renderMetrics(d);
+            if (d.type === 'table') return renderTable(d);
+            if (d.type === 'full') return renderFull(d);
+            if (d.type === 'vm_detail') return renderVMDetail(d);
+            if (d.type === 'placement') return renderPlacement(d);
+            if (d.type === 'text') return fmt(d.text);
+            return `<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
+        }
+
+        function renderMetrics(d) {
+            const title = d.title ? `<div style="font-size:12.5px;font-weight:600;color:var(--text);margin-bottom:8px">${esc(d.title)}</div>` :
+                '';
+            const cards = (d.metrics || []).map(m => {
+                const cls = m.status === 'crit' ? 'crit' : m.status === 'warn' ? 'warn' : m.status === 'ok' ? 'ok' : '';
+                return `<div class="mc ${cls}"><div class="mv">${esc(String(m.value))}</div><div class="ml">${esc(m.label)}</div></div>`;
+            }).join('');
+            const note = d.note ? `<div style="font-size:11px;color:var(--muted);margin-top:7px">${esc(d.note)}</div>` : '';
+            return `${title}<div class="metrics-grid">${cards}</div>${note}`;
+        }
+
+        function pctCls(p) { return p >= 85 ? 'crit' : p >= 70 ? 'warn' : 'ok'; }
+
+        function renderTable(d) {
+            const cols = d.columns || [],
+                rows = d.rows || [],
+                title = d.title || 'Report';
+            const thead = cols.map(c => `<th>${esc(c.label||c.key)}</th>`).join('');
+            const tbody = rows.map(r => {
+                const cells = cols.map(c => {
+                    const v = r[c.key];
+                    if (c.type === 'bar') {
+                        const p = parseFloat(v) || 0,
+                            cls = pctCls(p),
+                            w = Math.min(p, 100);
+                        return `<td><div class="bar-w"><div class="bar-t"><div class="bar-f ${cls}" style="width:${w}%"></div></div><span class="tok">${p.toFixed(1)}%</span></div></td>`;
+                    }
+                    if (c.type === 'status') {
+                        const s = String(v || '').toLowerCase();
+                        const cls = s.includes('on') || s.includes('pow') ? 'ok-txt' : s.includes('off') || s.includes('fail') ?
+                            'crit-txt' : 'warn-txt';
+                        return `<td class="${cls}">${esc(v||'–')}</td>`;
+                    }
+                    if (c.type === 'badge') {
+                        const n = parseFloat(v);
+                        const cls = n >= 85 ? 'crit-txt' : n >= 70 ? 'warn-txt' : 'ok-txt';
+                        return `<td class="${cls}">${v!=null?v:'–'}</td>`;
+                    }
+                    if (c.type === 'accent') return `<td class="accent-txt">${v!=null?esc(String(v)):'–'}</td>`;
+                    // Default: escape and show
+                    return `<td>${v!=null?esc(String(v)):'–'}</td>`;
+                }).join('');
+                return `<tr>${cells}</tr>`;
+            }).join('');
+
+            // Build CSV with proper column mapping
+            const csvHeaders = cols.map(c => c.label || c.key).join(',');
+            const csvRows = rows.map(r => cols.map(c => {
+                const v = r[c.key];
+                if (v === null || v === undefined) return '';
+                const s = String(v);
+                return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+            }).join(',')).join('\n');
+            const csv = csvHeaders + '\n' + csvRows;
+            const url = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csv);
+
+            return `<div class="rcard">
+        <div class="rcard-head">
+          <div><div class="rcard-title">${esc(title)}</div><div class="rcard-sub">${rows.length} rows</div></div>
+          <a class="dl-btn" href="${url}" download="${title.replace(/\s+/g,'_')}.csv">⬇ CSV</a>
+        </div>
+        <div class="rtw"><table class="rt"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>
+      </div>`;
+        }
+
+        function renderFull(d) {
+            let h = '';
+            if (d.title) h += `<div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:8px">📊 ${esc(d.title)}</div>`;
+            if (d.summary) h += renderMetrics({ metrics: d.summary });
+            if (d.note) h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">${esc(d.note)}</div>`;
+            (d.sections || []).forEach(sec => {
+                h +=
+                    `<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-top:13px;margin-bottom:4px">${esc(sec.title||'')}</div>`;
+                h += renderTable(sec);
+            });
+            return h;
+        }
+
+        function renderVMDetail(d) {
+            const vm = d.vm || {};
+            const pwr = String(vm.power_state || '').toLowerCase();
+            const dotCls = pwr.includes('on') || pwr.includes('pow') ? 'on' : pwr.includes('off') ? 'off' : 'unk';
+            const fields = [
+                ['Platform', vm.platform],
+                ['vCenter / Cluster', vm.vcenter_name],
+                ['Host', vm.host_name],
+                ['Cluster', vm.cluster_name],
+                ['CPU', vm.cpu ? (vm.cpu + ' vCPU') : null],
+                ['RAM', vm.ram_mb ? (Math.round(vm.ram_mb / 1024) + ' GB') : null],
+                ['Disk', vm.total_disk_gb ? (vm.total_disk_gb + ' GB') : null],
+                ['OS', vm.os],
+                ['IP Address', vm.ip_address],
+                ['Power State', vm.power_state],
+                ['MAC', vm.mac_address],
+                ['Tools', vm.vmware_tools_status],
+                ['Snapshots', vm.snapshot_count != null ? vm.snapshot_count : null],
+                ['Folder', vm.vm_folder],
+                ['Notes', vm.notes],
+            ].filter(f => f[1] != null && f[1] !== '');
+            const rows = fields.map(([k, v]) =>
+                `<div class="vm-row"><span class="vk">${esc(k)}</span><span class="vv">${esc(String(v))}</span></div>`).join('');
+            const disks = (d.disks || []).length > 0 ? `
+        <div style="padding:8px 14px 4px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">Disks</div>
+        ${renderTable({columns:[
+          {key:'disk_path',label:'Path'},{key:'size_gb',label:'Size GB'},{key:'type',label:'Type'}
+        ],rows:d.disks,title:''})}` :
+                '';
+            return `<div class="vm-detail">
+        <div class="vm-detail-header">
+          <div class="vm-status-dot ${dotCls}"></div>
+          <strong style="font-size:13px">${esc(vm.vm_name||'VM')}</strong>
+          <span style="font-size:11px;color:var(--muted);margin-left:4px">${esc(vm.power_state||'')}</span>
+        </div>
+        <div>${rows}</div>
+        ${disks}
+      </div>`;
+        }
+
+        function renderPlacement(d) {
+            const reqs = d.requirements || {};
+            const items = (d.suggestions || []).slice(0, 5).map((s, i) => {
+                const ranks = ['r1', 'r2', 'r3', 'r3', 'r3'];
+                const rcls = ranks[i] || 'r3';
+                const medals = ['🥇', '🥈', '🥉', '4', '5'];
+                const cpu = s.available_resources?.current_cpu_usage || 0;
+                const mem = s.available_resources?.current_memory_usage || 0;
+                const stor = s.available_resources?.current_storage_usage || 0;
+                const cpuCls = pctCls(cpu),
+                    memCls = pctCls(mem);
+                return `<div class="place-item" onclick="sendQ('Tell me about cluster ${esc(s.cluster_name)}')">
+              <div class="place-rank ${rcls}">${medals[i]}</div>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:12.5px;font-weight:500;color:var(--text)">${esc(s.cluster_name||s.resource_name)}</div>
+                <div style="font-size:11px;color:var(--muted)">${esc(s.platform)} · ${esc(s.vcenter_name||'')} · ${s.num_vms} VMs · ${s.num_hosts} hosts</div>
+                <div class="place-bars">
+                  <span class="mini-bar-w">CPU<div class="mini-bar"><div class="mini-bar-f bar-f ${cpuCls}" style="width:${Math.min(cpu,100)}%"></div></div>${cpu.toFixed(0)}%</span>
+                  <span class="mini-bar-w" style="margin-left:8px">RAM<div class="mini-bar"><div class="mini-bar-f bar-f ${memCls}" style="width:${Math.min(mem,100)}%"></div></div>${mem.toFixed(0)}%</span>
+                  <span class="mini-bar-w" style="margin-left:8px">Free RAM: ${(s.available_resources?.free_ram_gb||0).toFixed(0)} GB</span>
+                </div>
+              </div>
+              <div class="place-score">${s.total_score?.toFixed(1)||'–'}</div>
+            </div>`;
+            }).join('');
+            const reqStr =
+                `${reqs.cpu_cores||'?'} vCPU · ${reqs.ram_gb||'?'} GB RAM · ${reqs.storage_gb||'?'} GB disk · ${reqs.platform||'any'}`;
+            return `<div class="place-card">
+        <div class="place-header">
+          <div class="place-title">🎯 VM Placement Suggestions</div>
+          <div class="place-sub">Requirements: ${esc(reqStr)} · ${d.total_candidates||0} candidates evaluated</div>
+        </div>
+        ${items||'<div style="padding:14px;color:var(--muted);font-size:12.5px">No suitable clusters found for these requirements.</div>'}
+      </div>`;
+        }
+
+        /* ── Comparison table renderer ── */
+        function renderComparisonTable(comp) {
+            if (!comp || !comp.period1 || !comp.period2) return '';
+            const p1 = comp.period1;
+            const p2 = comp.period2;
+            const d = comp.deltas;
+            const arrow = (delta) => {
+                if (delta === 0) return '➡️ 0%';
+                const isImprovement = delta < 0;
+                const sign = isImprovement ? '▼' : '▲';
+                const cls = isImprovement ? 'delta-up' : 'delta-down';
+                return `<span class="${cls}">${sign} ${Math.abs(delta)}%</span>`;
+            };
+            return `<div class="rcard" style="margin-top:0.75rem;">
+        <div class="rcard-head">
+          <div><div class="rcard-title">📊 ${esc(comp.cluster)} (${comp.platform})</div></div>
+        </div>
+        <div class="rtw">
+          <table class="rt">
+            <thead><tr><th>Metric</th><th>${p1.start} – ${p1.end}</th><th>${p2.start} – ${p2.end}</th><th>Change</th></tr></thead>
+            <tbody>
+              <tr><td><strong>CPU</strong></td><td>${p1.cpu.avg}%</td><td>${p2.cpu.avg}%</td><td>${arrow(d.cpu)}</td></tr>
+              <tr><td><strong>Memory</strong></td><td>${p1.memory.avg}%</td><td>${p2.memory.avg}%</td><td>${arrow(d.memory)}</td></tr>
+              <tr><td><strong>Storage</strong></td><td>${p1.storage.avg}%</td><td>${p2.storage.avg}%</td><td>${arrow(d.storage)}</td></tr>
+              <tr><td><strong>VM Count</strong></td><td>${p1.vm_count}</td><td>${p2.vm_count}</td><td>${arrow(d.vm_count)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+        }
+
+        async function askQuestion() {
+            const input = document.getElementById('questionInput');
+            const q = (input.value || '').trim();
+            if (!q || isLoading) return;
+            isLoading = true;
+            document.getElementById('sendBtn').disabled = true;
+            input.value = '';
+            input.style.height = 'auto';
+            addMsg('user', esc(q));
+            showTyping();
+
+            // Detect cluster comparison query
+            const compareMatch = q.match(
+                /compare\s+cluster\s+([\w\-]+)\s+between\s+([\d\-]+)\s+and\s+([\d\-]+)\s+vs\s+([\d\-]+)\s+and\s+([\d\-]+)/i);
+            if (compareMatch) {
+                const cluster = compareMatch[1];
+                const start1 = compareMatch[2];
+                const end1 = compareMatch[3];
+                const start2 = compareMatch[4];
+                const end2 = compareMatch[5];
+                try {
+                    const res = await fetch('/api/ai/compare_insight', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ cluster, start1, end1, start2, end2 })
+                    });
+                    const data = await res.json();
+                    removeTyping();
+                    if (data.error) {
+                        addMsg('ai', `<span style="color:var(--red)">⚠ ${esc(data.error)}</span>`, true);
+                    } else {
+                        let reply = `<div><strong>🤖 Insight:</strong> ${esc(data.insight)}</div>`;
+                        if (data.comparison) {
+                            reply += renderComparisonTable(data.comparison);
+                        }
+                        addMsg('ai', reply);
+                    }
+                } catch (err) {
+                    removeTyping();
+                    addMsg('ai', `<span style="color:var(--red)">⚠ Network error: ${esc(err.message)}</span>`, true);
+                }
+                isLoading = false;
+                document.getElementById('sendBtn').disabled = false;
+                input.focus();
+                return;
+            }
+
+            // Regular query
+            try {
+                const res = await fetch('/api/ai/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: q }) });
+                const json = await res.json();
+                removeTyping();
+                if (json.error) {
+                    addMsg('ai', `<span style="color:var(--red)">⚠ ${esc(json.error)}</span>`, true);
+                } else {
+                    const parts = [];
+                    if (json.answer) parts.push(fmt(json.answer));
+                    if (json.report) parts.push(fmt(json.report));
+                    addMsg('ai', parts.join(''));
+                }
+            } catch (err) {
+                removeTyping();
+                addMsg('ai', `<span style="color:var(--red)">⚠ Network error: ${esc(err.message)}</span>`, true);
+            }
+            isLoading = false;
+            document.getElementById('sendBtn').disabled = false;
+            input.focus();
+        }
+
+        async function trainModels() {
+            if (!confirm('Train ML models for all clusters, hosts, VMs and datastores? This may take a few minutes.')) return;
+            addMsg('ai', 'Training ML models... please wait ⏳');
+            const res = await fetch('/api/ai/train_models');
+            const d = await res.json();
+            const summary = (d.results || []).map(r => `${r.entity}: ${r.status}`).join('\n');
+            addMsg('ai', `<pre>${esc(summary)}</pre>`);
+        }
+    </script>
+
+</body>
+</html>

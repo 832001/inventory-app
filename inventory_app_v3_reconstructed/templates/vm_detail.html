@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex align-items-center gap-2 mb-3">
+    <a href="/vms" class="btn btn-outline-secondary btn-sm">
+        <i class="bi bi-arrow-left"></i> Back to VMs
+    </a>
+    <h5 class="mb-0 fw-semibold" id="page-title">
+        <i class="bi bi-hdd-stack me-1"></i>
+        <span id="vm-name-heading">{{ vm_name }}</span>
+    </h5>
+    <span id="platform-badge" class="badge bg-secondary ms-1"></span>
+</div>
+
+<!-- Summary bar (latest run) -->
+<div id="summary-bar" class="row g-2 mb-4" style="display:none!important"></div>
+
+<!-- Timeline -->
+<div id="runs-container">
+    <div class="text-center text-muted py-5">
+        <div class="spinner-border spinner-border-sm me-2"></div>Loading history…
+    </div>
+</div>
+
+<style>
+.run-card              { border:1px solid var(--bs-border-color); border-radius:8px; margin-bottom:1.25rem; overflow:hidden; }
+.run-card-header       { background:var(--bs-tertiary-bg); padding:.65rem 1rem; display:flex; align-items:center; gap:.75rem; flex-wrap:wrap; }
+.run-card-body         { padding:.85rem 1rem; }
+.changed-field         { background:#fff3cd; border-radius:4px; padding:2px 6px; font-size:.82rem; }
+.badge-on              { background:#198754; color:#fff; }
+.badge-off             { background:#dc3545; color:#fff; }
+.diff-arrow            { color:#6c757d; margin:0 4px; }
+.diff-from             { text-decoration:line-through; color:#6c757d; }
+.diff-to               { color:#0d6efd; font-weight:500; }
+.disk-table            { font-size:.82rem; }
+.disk-table th         { font-weight:500; background:var(--bs-tertiary-bg); }
+.changed-row td        { background:#fff3cd!important; }
+.run-latest-badge      { font-size:.7rem; }
+.stat-card             { border:1px solid var(--bs-border-color); border-radius:8px; padding:.6rem 1rem; background:var(--bs-body-bg); }
+.stat-card .label      { font-size:.72rem; color:#6c757d; text-transform:uppercase; letter-spacing:.04em; }
+.stat-card .value      { font-size:1.1rem; font-weight:600; }
+.change-pill           { display:inline-flex; align-items:center; gap:4px; background:var(--bs-warning-bg-subtle);
+                         border:1px solid var(--bs-warning-border-subtle); border-radius:20px;
+                         padding:2px 10px; font-size:.78rem; margin:2px 3px; }
+.part-usage-bar        { height:6px; border-radius:3px; background:#e9ecef; overflow:hidden; margin-top:3px; }
+.part-usage-fill       { height:100%; border-radius:3px; transition:width .4s; }
+.part-usage-high       { background:#dc3545; }
+.part-usage-med        { background:#f59e0b; }
+.part-usage-low        { background:#198754; }
+.disk-tab-btn          { background:transparent; border:none; border-bottom:2px solid transparent;
+                         padding:.35rem .75rem; font-size:.8rem; cursor:pointer; color:#6c757d; font-weight:500; }
+.disk-tab-btn.active   { border-bottom-color:#0d6efd; color:#0d6efd; }
+.disk-tab-pane         { display:none; }
+.disk-tab-pane.active  { display:block; }
+</style>
+
+<script>
+const VM_NAME = {{ vm_name | tojson }};
+
+const FIELD_LABELS = {
+    cpu:'CPU', ram_mb:'RAM', total_disk_gb:'Total Disk', disk_count:'Disk Count',
+    ip_address:'IP Address', os:'OS', power_state:'Power State',
+    is_template:'Template', nic_count:'NICs', hostname:'Hostname'
+};
+
+const fmtRam  = mb  => mb  ? (mb/1024).toFixed(1)+' GB' : '—';
+const fmtDisk = gb  => gb  != null ? parseFloat(gb).toFixed(1)+' GB' : '—';
+const fmtPct  = v   => v   != null ? parseFloat(v).toFixed(1)+'%' : '—';
+const fmtDate = ts  => {
+    if (!ts) return '—';
+    return new Date(ts).toLocaleString(undefined,
+        {year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+};
+const escHtml = s => s == null ? '' : String(s).replace(/[&<>"']/g,
+    m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+function fmtFieldVal(field, val) {
+    if (val === null || val === undefined) return '<span class="text-muted">—</span>';
+    if (field === 'ram_mb')        return fmtRam(val);
+    if (field === 'total_disk_gb') return fmtDisk(val);
+    if (field === 'is_template')   return val ? 'Yes' : 'No';
+    if (field === 'power_state')   return powerBadge(val);
+    return escHtml(val);
+}
+
+function powerBadge(state) {
+    if (!state) return '<span class="badge bg-secondary">Unknown</span>';
+    const s = state.toLowerCase();
+    if (s === 'poweredon'  || s === 'running') return '<span class="badge badge-on">On</span>';
+    if (s === 'poweredoff' || s === 'off')     return '<span class="badge badge-off">Off</span>';
+    return `<span class="badge bg-secondary">${escHtml(state)}</span>`;
+}
+
+function platformIcon(p) {
+    if (!p) return '';
+    return p.toLowerCase() === 'vmware'
+        ? '<i class="bi bi-server"></i>'
+        : '<i class="bi bi-windows"></i>';
+}
+
+function usageBar(pct) {
+    const p   = parseFloat(pct) || 0;
+    const cls = p >= 85 ? 'part-usage-high' : p >= 70 ? 'part-usage-med' : 'part-usage-low';
+    return `<div class="part-usage-bar">
+                <div class="part-usage-fill ${cls}" style="width:${Math.min(p,100)}%"></div>
+            </div>`;
+}
+
+function renderSummary(run) {
+    const bar = document.getElementById('summary-bar');
+    const stats = [
+        { label:'Platform',    value: platformIcon(run.platform)+' '+escHtml(run.platform) },
+        { label:'Environment', value: escHtml(run.environment || '—') },
+        { label:'CPU',         value: escHtml(run.cpu ?? '—') },
+        { label:'RAM',         value: fmtRam(run.ram_mb) },
+        { label:'Total Disk',  value: fmtDisk(run.total_disk_gb) },
+        { label:'IP',          value: escHtml(run.ip_address || '—') },
+        { label:'OS',          value: escHtml(run.os || '—') },
+        { label:'Power',       value: powerBadge(run.power_state) },
+    ];
+    bar.innerHTML = stats.map(s => `
+        <div class="col-6 col-sm-4 col-md-3 col-xl-2">
+            <div class="stat-card">
+                <div class="label">${s.label}</div>
+                <div class="value">${s.value}</div>
+            </div>
+        </div>`).join('');
+    bar.style.display = '';
+}
+
+function renderChangePills(changes) {
+    const entries = Object.entries(changes);
+    if (!entries.length) return '';
+    return `<div class="mt-1">
+        ${entries.map(([field, diff]) => {
+            const label = FIELD_LABELS[field] || field;
+            const from  = fmtFieldVal(field, diff.from);
+            const to    = fmtFieldVal(field, diff.to);
+            return `<span class="change-pill">
+                <i class="bi bi-pencil-fill" style="font-size:.65rem;color:#856404"></i>
+                <strong>${escHtml(label)}:</strong>
+                <span class="diff-from">${from}</span>
+                <span class="diff-arrow">→</span>
+                <span class="diff-to">${to}</span>
+            </span>`;
+        }).join('')}
+    </div>`;
+}
+
+function renderVmwareDisks(disks) {
+    if (!disks || !disks.length)
+        return '<p class="text-muted small mb-0 mt-2">No VMDK data for this run.</p>';
+    return `<table class="table table-sm table-bordered disk-table mb-0 mt-2">
+        <thead><tr>
+            <th>Disk Path</th>
+            <th>Size (GB)</th>
+            <th>Guest Path</th>
+        </tr></thead>
+        <tbody>
+        ${disks.map(d => `<tr>
+            <td class="font-monospace small">${escHtml(d.disk_path || '—')}</td>
+            <td>${d.disk_size_gb != null ? parseFloat(d.disk_size_gb).toFixed(2) : '—'}</td>
+            <td class="font-monospace small">${escHtml(d.guest_disk_path || '—')}</td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function renderPartitions(partitions) {
+    if (!partitions || !partitions.length)
+        return '<p class="text-muted small mb-0 mt-2">No partition usage data for this run.</p>';
+    const sorted = [...partitions].sort((a,b) => (parseFloat(b.usage_pct)||0)-(parseFloat(a.usage_pct)||0));
+    return `<table class="table table-sm table-bordered disk-table mb-0 mt-2">
+        <thead><tr>
+            <th>Partition</th>
+            <th>Capacity (GB)</th>
+            <th>Used (GB)</th>
+            <th>Free (GB)</th>
+            <th>Usage %</th>
+            <th style="min-width:120px">Usage Bar</th>
+        </tr></thead>
+        <tbody>
+        ${sorted.map(p => {
+            const pct    = parseFloat(p.usage_pct) || 0;
+            const rowCls = pct >= 85 ? 'table-danger' : pct >= 70 ? 'table-warning' : '';
+            return `<tr class="${rowCls}">
+                <td class="font-monospace fw-semibold">${escHtml(p.partition_path || '—')}</td>
+                <td>${p.capacity_gb != null ? parseFloat(p.capacity_gb).toFixed(2) : '—'}</td>
+                <td>${p.used_gb     != null ? parseFloat(p.used_gb).toFixed(2)     : '—'}</td>
+                <td>${p.free_gb     != null ? parseFloat(p.free_gb).toFixed(2)     : '—'}</td>
+                <td><strong>${fmtPct(p.usage_pct)}</strong></td>
+                <td>${usageBar(p.usage_pct)}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+    </table>`;
+}
+
+function renderHypervDisks(disks) {
+    if (!disks || !disks.length)
+        return '<p class="text-muted small mb-0 mt-2">No disk data for this run.</p>';
+    return `<table class="table table-sm table-bordered disk-table mb-0 mt-2">
+        <thead><tr>
+            <th>Disk Path</th>
+            <th>Size (GB)</th>
+            <th>Actual (GB)</th>
+            <th>Type</th>
+            <th>Format</th>
+            <th>Controller</th>
+            <th>Datastore</th>
+        </tr></thead>
+        <tbody>
+        ${disks.map(d => `<tr>
+            <td class="font-monospace small">${escHtml(d.disk_path || '—')}</td>
+            <td>${d.disk_size_gb   != null ? parseFloat(d.disk_size_gb).toFixed(2)   : '—'}</td>
+            <td>${d.actual_size_gb != null ? parseFloat(d.actual_size_gb).toFixed(2) : '—'}</td>
+            <td>${escHtml(d.disk_type      || '—')}</td>
+            <td>${escHtml(d.disk_format    || '—')}</td>
+            <td>${escHtml(d.controller     || '—')}</td>
+            <td>${escHtml(d.datastore_name || '—')}</td>
+        </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function renderDiskSection(run, idx) {
+    const isVmware = (run.platform || '').toLowerCase() === 'vmware';
+    // Use vm_inventory_id + run_id + idx for a guaranteed unique collapse ID
+    const uid      = `${run.vm_inventory_id}-${run.run_id}-${idx}`;
+    const diskCnt  = run.disks.length;
+    const partCnt  = (run.partitions || []).length;
+    const hasHighUsage = (run.partitions || []).some(p => parseFloat(p.usage_pct) >= 85);
+
+    if (!isVmware) {
+        return `
+        <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+                type="button"
+                data-bs-toggle="collapse"
+                data-bs-target="#disks-${uid}"
+                aria-expanded="false">
+            <i class="bi bi-hdd me-1"></i>
+            ${diskCnt} disk${diskCnt !== 1 ? 's' : ''}
+            <i class="bi bi-chevron-down ms-1" style="font-size:.7rem"></i>
+        </button>
+        <div class="collapse mt-2" id="disks-${uid}">
+            ${renderHypervDisks(run.disks)}
+        </div>`;
+    }
+
+    const diskLabel = `${diskCnt} VMDK${diskCnt !== 1 ? 's' : ''}`;
+    const partLabel = `${partCnt} Partition${partCnt !== 1 ? 's' : ''}`;
+
+    return `
+    <button class="btn btn-outline-secondary btn-sm py-0 px-2"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#disks-${uid}"
+            aria-expanded="false">
+        <i class="bi bi-hdd me-1"></i>
+        ${diskLabel}${partCnt > 0 ? ' · '+partLabel : ''}
+        ${hasHighUsage ? '<i class="bi bi-exclamation-triangle-fill text-danger ms-1" style="font-size:.75rem"></i>' : ''}
+        <i class="bi bi-chevron-down ms-1" style="font-size:.7rem"></i>
+    </button>
+    <div class="collapse mt-2" id="disks-${uid}">
+        ${partCnt > 0 ? `
+        <div class="d-flex gap-0 border-bottom mb-0" style="margin-bottom:0!important">
+            <button class="disk-tab-btn active"
+                    onclick="switchDiskTab('${uid}','vmdk',this)">
+                <i class="bi bi-hdd me-1"></i>VMDKs (${diskCnt})
+            </button>
+            <button class="disk-tab-btn"
+                    onclick="switchDiskTab('${uid}','parts',this)">
+                <i class="bi bi-pie-chart me-1"></i>Partitions (${partCnt})
+                ${hasHighUsage ? '<i class="bi bi-exclamation-triangle-fill text-danger ms-1"></i>' : ''}
+            </button>
+        </div>
+        <div id="tab-vmdk-${uid}"  class="disk-tab-pane active">${renderVmwareDisks(run.disks)}</div>
+        <div id="tab-parts-${uid}" class="disk-tab-pane">${renderPartitions(run.partitions)}</div>
+        ` : renderVmwareDisks(run.disks)}
+    </div>`;
+}
+
+window.switchDiskTab = function(uid, tab, btn) {
+    document.getElementById(`tab-vmdk-${uid}`).classList.toggle('active',  tab === 'vmdk');
+    document.getElementById(`tab-parts-${uid}`).classList.toggle('active', tab === 'parts');
+    btn.closest('.d-flex').querySelectorAll('.disk-tab-btn')
+       .forEach(b => b.classList.toggle('active', b === btn));
+};
+
+function renderMetaRow(run) {
+    const fields = [
+        ['CPU',         run.cpu ?? '—',                   'cpu'],
+        ['RAM',         fmtRam(run.ram_mb),               'ram_mb'],
+        ['Total Disk',  fmtDisk(run.total_disk_gb),       'total_disk_gb'],
+        ['Disk Count',  run.disk_count ?? '—',            'disk_count'],
+        ['IP',          escHtml(run.ip_address || '—'),   'ip_address'],
+        ['OS',          escHtml(run.os || '—'),           'os'],
+        ['Power',       powerBadge(run.power_state),      'power_state'],
+        ['NICs',        run.nic_count ?? '—',             'nic_count'],
+        ['Hostname',    escHtml(run.hostname || '—'),     'hostname'],
+        ['Template',    run.is_template ? 'Yes' : 'No',  'is_template'],
+        ...(run.platform === 'VMware'  ? [['Tools', escHtml(run.tools_version || '—'), null]] : []),
+        ...(run.platform === 'Hyper-V' ? [
+            ['Host',          escHtml(run.host_name || '—'),  null],
+            ['Uptime (days)', run.uptime_days ?? '—',          null],
+            ['Actual Disk',   fmtDisk(run.actual_disk_gb),     null],
+            ['Thin Savings',  fmtDisk(run.thin_savings_gb),    null],
+        ] : []),
+    ];
+
+    return fields.map(([label, val, changeKey]) => {
+        const isChanged = changeKey && run.changes[changeKey] !== undefined;
+        return `<div class="col-6 col-sm-4 col-md-3 col-xl-2">
+            <div class="stat-card ${isChanged ? 'changed-field' : ''}">
+                <div class="label">
+                    ${label}
+                    ${isChanged ? '<i class="bi bi-pencil-fill text-warning ms-1" style="font-size:.6rem"></i>' : ''}
+                </div>
+                <div class="value" style="font-size:.9rem">${val}</div>
+                ${isChanged ? `<div class="mt-1" style="font-size:.75rem">
+                    <span class="diff-from">${fmtFieldVal(changeKey, run.changes[changeKey].from)}</span>
+                    <span class="diff-arrow">→</span>
+                    <span class="diff-to">${fmtFieldVal(changeKey, run.changes[changeKey].to)}</span>
+                </div>` : ''}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function renderRuns(runs) {
+    const container = document.getElementById('runs-container');
+    if (!runs || !runs.length) {
+        container.innerHTML = '<div class="alert alert-warning">No run history found for this VM.</div>';
+        return;
+    }
+
+    renderSummary(runs[0]);
+
+    const pb = document.getElementById('platform-badge');
+    const p  = runs[0].platform || '';
+    pb.innerHTML = platformIcon(p) + ' ' + escHtml(p);
+    pb.className = 'badge ms-1 ' + (p.toLowerCase() === 'vmware' ? 'bg-primary' : 'bg-info text-dark');
+
+    let html = '';
+    runs.forEach((run, idx) => {
+        const hasChanges       = Object.keys(run.changes).length > 0;
+        const isLatest         = idx === 0;
+        const changePills      = renderChangePills(run.changes);
+        const headerClass      = hasChanges
+            ? 'run-card-header border-start border-warning border-3'
+            : 'run-card-header';
+        const hasHighPartUsage = (run.partitions || []).some(p => parseFloat(p.usage_pct) >= 85);
+
+        html += `
+        <div class="run-card">
+            <div class="${headerClass}">
+                <span class="text-muted small fw-semibold">#${escHtml(String(run.run_id))}</span>
+                <span class="fw-semibold">${fmtDate(run.run_timestamp)}</span>
+                ${isLatest
+                    ? '<span class="badge bg-success run-latest-badge">Latest</span>'
+                    : ''}
+                ${hasChanges
+                    ? '<span class="badge bg-warning text-dark run-latest-badge"><i class="bi bi-exclamation-triangle-fill me-1"></i>Changes detected</span>'
+                    : ''}
+                ${hasHighPartUsage
+                    ? '<span class="badge bg-danger run-latest-badge"><i class="bi bi-hdd-fill me-1"></i>Disk &gt;85%</span>'
+                    : ''}
+                <span class="ms-auto small text-muted">${escHtml(run.source || '')}</span>
+                ${run.collection_status && run.collection_status !== 'Success'
+                    ? `<span class="badge bg-danger">${escHtml(run.collection_status)}</span>`
+                    : ''}
+            </div>
+            <div class="run-card-body">
+                ${hasChanges ? changePills : ''}
+                <div class="row g-2 mt-1 mb-2">${renderMetaRow(run)}</div>
+                <div>${renderDiskSection(run, idx)}</div>
+            </div>
+        </div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+    // Read scoping params from URL query string (set by vms.html link)
+    const urlParams = new URLSearchParams(window.location.search);
+    const uuidParam = urlParams.get('uuid');
+    const ipParam   = urlParams.get('ip');
+
+    let url = `/api/vm/${encodeURIComponent(VM_NAME)}/history`;
+    const params = [];
+    if (uuidParam) params.push(`uuid=${encodeURIComponent(uuidParam)}`);
+    if (ipParam)   params.push(`ip=${encodeURIComponent(ipParam)}`);
+    if (params.length) url += '?' + params.join('&');
+
+    fetch(url)
+        .then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.json();
+        })
+        .then(data => renderRuns(data.runs))
+        .catch(err => {
+            document.getElementById('runs-container').innerHTML =
+                `<div class="alert alert-danger">Failed to load VM history: ${escHtml(err.message)}</div>`;
+        });
+});
+
+</script>
+{% endblock %}

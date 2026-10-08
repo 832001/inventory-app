@@ -1,0 +1,478 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">VMware Run:</label>
+        <select id="vmwareRunFilter" class="form-select form-select-sm">
+            <option value="">Latest VMware Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Hyper&#8209;V Run:</label>
+        <select id="hypervRunFilter" class="form-select form-select-sm">
+            <option value="">Latest Hyper-V Run</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn active" data-platform="all"     onclick="setPlatformFilter('all')">All</span>
+            <span class="platform-filter-btn"        data-platform="vmware"  onclick="setPlatformFilter('vmware')">VMware</span>
+            <span class="platform-filter-btn"        data-platform="hyper-v" onclick="setPlatformFilter('hyper-v')">Hyper-V</span>
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn active" data-power="all" onclick="setPowerFilter('all')">All States</span>
+            <span class="platform-filter-btn"        data-power="on"  onclick="setPowerFilter('on')">
+                <i class="bi bi-circle-fill text-success" style="font-size:.6rem"></i> On
+            </span>
+            <span class="platform-filter-btn"        data-power="off" onclick="setPowerFilter('off')">
+                <i class="bi bi-circle-fill text-danger" style="font-size:.6rem"></i> Off
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn active" data-template="all" onclick="setTemplateFilter('all')">All VMs</span>
+            <span class="platform-filter-btn"        data-template="no"  onclick="setTemplateFilter('no')">
+                <i class="bi bi-pc-display"></i> VMs Only
+            </span>
+            <span class="platform-filter-btn"        data-template="yes" onclick="setTemplateFilter('yes')">
+                <i class="bi bi-copy"></i> Templates Only
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:220px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="vmSearch" class="form-control" placeholder="Search VMs, IP, OS…">
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openBulkSearch()"
+                title="Bulk search by VM names or IPs">
+            <i class="bi bi-list-ul"></i>
+        </button>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportVMs('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportVMs('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk active indicator -->
+<div id="bulkActiveBar" class="alert alert-info d-flex align-items-center gap-2 mb-2 py-2"
+     style="display:none!important;font-size:.85rem">
+    <i class="bi bi-funnel-fill"></i>
+    <span id="bulkActiveText"></span>
+    <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onclick="clearBulkSearch()">
+        <i class="bi bi-x me-1"></i>Clear bulk filter
+    </button>
+</div>
+
+<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+    <span class="text-muted small" id="vm-pager-info">Loading…</span>
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" id="vm-prev" onclick="vmPagePrev()" disabled>
+            <i class="bi bi-chevron-left"></i> Prev
+        </button>
+        <span class="text-muted small" id="vm-page-label"></span>
+        <button class="btn btn-outline-secondary btn-sm" id="vm-next" onclick="vmPageNext()" disabled>
+            Next <i class="bi bi-chevron-right"></i>
+        </button>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th>
+                <th>VM Name</th>
+                <th>vCenter / Cluster</th>
+                <th>CPU</th>
+                <th>RAM (GB)</th>
+                <th>OS</th>
+                <th>IP Address</th>
+                <th>All IPs</th>
+                <th>Disk Count</th>
+                <th>Total Disk (GB)</th>
+                <th>Template</th>
+                <th>Power State</th>
+            </tr>
+        </thead>
+        <tbody id="vmsTable">
+            <tr><td colspan="12" class="text-center text-muted py-3">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+            </td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="d-flex align-items-center justify-content-between mt-2 flex-wrap gap-2">
+    <span class="text-muted small" id="vm-pager-info-bottom"></span>
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" id="vm-prev-bottom" onclick="vmPagePrev()" disabled>
+            <i class="bi bi-chevron-left"></i> Prev
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" id="vm-next-bottom" onclick="vmPageNext()" disabled>
+            Next <i class="bi bi-chevron-right"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Bulk search modal -->
+<div class="modal fade" id="bulkSearchModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-list-ul me-2"></i>Bulk Search
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2">
+                    Paste VM names or IP addresses — one per line, or comma/semicolon separated.<br>
+                    Searches <strong>VM Name</strong> (exact), <strong>IP Address</strong>, and <strong>All IPs</strong>.<br>
+                    Any VM matching <em>any</em> of the values will be shown.
+                </p>
+                <textarea id="bulkSearchInput" class="form-control font-monospace"
+                          rows="12"
+                          placeholder="e.g.&#10;10.19.25.100&#10;10.19.25.222&#10;web-server-01&#10;db-prod-02"></textarea>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <span class="text-muted small" id="bulkSearchCount">0 values entered</span>
+                    <button class="btn btn-outline-secondary btn-sm"
+                            onclick="document.getElementById('bulkSearchInput').value='';updateBulkCount()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="applyBulkSearch()">
+                    <i class="bi bi-search me-1"></i>Search
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentPlatformFilter = "all";
+    let currentPowerFilter    = "all";
+    let currentTemplateFilter = "all";
+    let searchTerm  = "";
+    let bulkTerms   = [];
+    let currentEnv  = "";
+    let currentPage = 1;
+    let totalPages  = 1;
+    let totalVMs    = 0;
+    const perPage   = 100;
+    let debounceTimer = null;
+
+    function toNum(v) { return (v === undefined || v === null) ? 0 : parseFloat(v) || 0; }
+    function formatRam(mb) { return (toNum(mb) / 1024).toFixed(1); }
+
+    function escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/[&<>"']/g, m =>
+            ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[m]));
+    }
+
+    function getPlatformIcon(platform) {
+        const p = (platform || '').toLowerCase();
+        if (p === 'vmware')  return '<i class="bi bi-server"></i> VMware';
+        if (p === 'hyper-v') return '<i class="bi bi-windows"></i> Hyper-V';
+        return '<i class="bi bi-question-circle"></i> Unknown';
+    }
+
+    function getPowerBadge(state) {
+        if (!state) return '<span class="badge bg-secondary">Unknown</span>';
+        const s = state.toLowerCase();
+        if (s === 'poweredon'  || s === 'running') return '<span class="badge bg-success">On</span>';
+        if (s === 'poweredoff' || s === 'off')     return '<span class="badge bg-danger">Off</span>';
+        return `<span class="badge bg-secondary">${escapeHtml(state)}</span>`;
+    }
+
+    function populateEnvSelect() {
+        fetch("/api/vcenters")
+            .then(res => res.json())
+            .then(data => {
+                const envSet = new Set();
+                data.forEach(vc => { if (vc.name) envSet.add(vc.name); });
+                const select = document.getElementById('envSelect');
+                if (!select) return;
+                const selected = new URLSearchParams(window.location.search).get('vcenter') || "";
+                select.innerHTML = '<option value="">— All Environments —</option>';
+                Array.from(envSet).sort().forEach(env => {
+                    const opt = document.createElement('option');
+                    opt.value = env;
+                    opt.textContent = env;
+                    if (env === selected) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                currentEnv = selected;
+            })
+            .catch(err => console.error("Failed to load vcenters:", err));
+    }
+
+    function onEnvChange() {
+        const select = document.getElementById('envSelect');
+        if (!select) return;
+        const url = new URL(window.location.href);
+        if (select.value) url.searchParams.set('vcenter', select.value);
+        else url.searchParams.delete('vcenter');
+        window.location.href = url.toString();
+    }
+
+    window.setPlatformFilter = function(platform) {
+        currentPlatformFilter = platform;
+        document.querySelectorAll('.platform-filter-btn[data-platform]').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.platform === platform));
+        currentPage = 1;
+        loadVMs();
+    };
+
+    window.setPowerFilter = function(power) {
+        currentPowerFilter = power;
+        document.querySelectorAll('.platform-filter-btn[data-power]').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.power === power));
+        currentPage = 1;
+        loadVMs();
+    };
+
+    window.setTemplateFilter = function(val) {
+        currentTemplateFilter = val;
+        document.querySelectorAll('.platform-filter-btn[data-template]').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.template === val));
+        currentPage = 1;
+        loadVMs();
+    };
+
+    function filterTable() {
+        // Typing in single search clears bulk mode
+        if (bulkTerms.length > 0) {
+            bulkTerms = [];
+            updateBulkBar();
+        }
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            searchTerm = document.getElementById('vmSearch').value.trim();
+            currentPage = 1;
+            loadVMs();
+        }, 300);
+    }
+
+    function updatePager() {
+        const infoText = totalVMs > 0
+            ? `Showing ${(currentPage - 1) * perPage + 1}–${Math.min(currentPage * perPage, totalVMs)} of ${totalVMs.toLocaleString()} VMs`
+            : "No VMs found";
+        ['vm-pager-info', 'vm-pager-info-bottom'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = infoText;
+        });
+        const label = document.getElementById('vm-page-label');
+        if (label) label.textContent = `Page ${currentPage} / ${totalPages}`;
+        document.getElementById('vm-prev').disabled        = currentPage <= 1;
+        document.getElementById('vm-next').disabled        = currentPage >= totalPages;
+        document.getElementById('vm-prev-bottom').disabled = currentPage <= 1;
+        document.getElementById('vm-next-bottom').disabled = currentPage >= totalPages;
+    }
+
+    window.vmPagePrev = function() { if (currentPage > 1)          { currentPage--; loadVMs(); } };
+    window.vmPageNext = function() { if (currentPage < totalPages) { currentPage++; loadVMs(); } };
+
+    function renderTable(data) {
+        const tbody = document.getElementById('vmsTable');
+        if (!tbody) return;
+
+        const vms   = data.data  || [];
+        totalVMs    = data.total || 0;
+        totalPages  = data.pages || 1;
+        currentPage = data.page  || 1;
+
+        if (vms.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3">No VMs found</td></tr>';
+            updatePager();
+            return;
+        }
+
+        let html = '';
+        vms.forEach(vm => {
+            const vmName = vm.vm_name || '-';
+
+            // Build link with uuid (VMware) or ip (Hyper-V / fallback)
+            // so the detail page scopes to exactly this physical VM
+            let vmLink = `/vm/${encodeURIComponent(vmName)}`;
+            if (vm.vm_uuid) {
+                vmLink += `?uuid=${encodeURIComponent(vm.vm_uuid)}`;
+            } else if (vm.ip_address) {
+                vmLink += `?ip=${encodeURIComponent(vm.ip_address)}`;
+            }
+
+            const allIps   = vm.all_ips && vm.all_ips !== vm.ip_address
+                               ? escapeHtml(vm.all_ips)
+                               : escapeHtml(vm.ip_address || '-');
+            const template = vm.is_template
+                               ? '<span class="badge bg-warning text-dark">Yes</span>'
+                               : '<span class="text-muted">No</span>';
+
+            html += `<tr>
+                <td>${getPlatformIcon(vm.platform)}</td>
+                <td><a href="${vmLink}" class="text-primary fw-semibold">${escapeHtml(vmName)}</a></td>
+                <td>${escapeHtml(vm.vcenter_name || '-')}</td>
+                <td>${toNum(vm.cpu)}</td>
+                <td>${formatRam(vm.ram_mb)}</td>
+                <td>${escapeHtml(vm.os || '-')}</td>
+                <td>${escapeHtml(vm.ip_address || '-')}</td>
+                <td class="small text-muted">${allIps}</td>
+                <td class="text-center">${toNum(vm.disk_count)}</td>
+                <td class="text-center">${toNum(vm.total_disk_gb).toFixed(1)}</td>
+                <td class="text-center">${template}</td>
+                <td class="text-center">${getPowerBadge(vm.power_state)}</td>
+            </tr>`;
+        });
+        tbody.innerHTML = html;
+        updatePager();
+    }
+
+    function buildParams(extra = {}) {
+        const vmwareRunId = document.getElementById("vmwareRunFilter")?.value || "";
+        const hypervRunId = document.getElementById("hypervRunFilter")?.value || "";
+        const params = [];
+        if (vmwareRunId)                          params.push(`run_id_vmware=${vmwareRunId}`);
+        if (hypervRunId)                          params.push(`run_id_hyperv=${hypervRunId}`);
+        if (currentEnv)                           params.push(`vcenter=${encodeURIComponent(currentEnv)}`);
+        if (currentPlatformFilter !== 'all')      params.push(`platform=${encodeURIComponent(currentPlatformFilter)}`);
+        if (currentPowerFilter    !== 'all')      params.push(`power_state=${encodeURIComponent(currentPowerFilter)}`);
+        if (currentTemplateFilter !== 'all')      params.push(`is_template=${encodeURIComponent(currentTemplateFilter)}`);
+        if (bulkTerms.length > 0) {
+            params.push(`bulk_q=${encodeURIComponent(bulkTerms.join(','))}`);
+        } else if (searchTerm) {
+            params.push(`q=${encodeURIComponent(searchTerm)}`);
+        }
+        for (const [k, v] of Object.entries(extra)) params.push(`${k}=${encodeURIComponent(v)}`);
+        return params.join('&');
+    }
+
+    window.exportVMs = function(fmt) {
+        window.location.href = `/api/vms/export?${buildParams({ per_page: 1000000, format: fmt })}`;
+    };
+
+    function loadVmwareRuns() {
+        return fetch("/api/unified/runs").then(r => r.json()).then(data => {
+            const sel = document.getElementById("vmwareRunFilter");
+            if (!sel || !Array.isArray(data.runs)) return;
+            const runs = data.runs.filter(r => r.platform === 'VMware');
+            sel.innerHTML = '<option value="">Latest VMware Run</option>';
+            runs.forEach(run => {
+                sel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`;
+            });
+            sel.onchange = () => { currentPage = 1; loadVMs(); };
+        }).catch(err => console.error("Failed to load VMware runs:", err));
+    }
+
+    function loadHypervRuns() {
+        return fetch("/api/unified/runs").then(r => r.json()).then(data => {
+            const sel = document.getElementById("hypervRunFilter");
+            if (!sel || !Array.isArray(data.runs)) return;
+            const runs = data.runs.filter(r => r.platform === 'Hyper-V');
+            sel.innerHTML = '<option value="">Latest Hyper-V Run</option>';
+            runs.forEach(run => {
+                sel.innerHTML += `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp || 'N/A'}</option>`;
+            });
+            sel.onchange = () => { currentPage = 1; loadVMs(); };
+        }).catch(err => console.error("Failed to load Hyper-V runs:", err));
+    }
+
+    function loadVMs() {
+        const tbody = document.getElementById("vmsTable");
+        if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading VMs…</td></tr>';
+        fetch(`/api/vms?${buildParams({ page: currentPage, per_page: perPage })}`)
+            .then(r => r.json())
+            .then(renderTable)
+            .catch(err => {
+                console.error("Error loading VMs:", err);
+                if (tbody) tbody.innerHTML = '<tr><td colspan="12" class="text-center text-danger py-3">Failed to load VMs</td></tr>';
+            });
+    }
+
+    // ── Bulk search ────────────────────────────────────────────────────────────
+    function parseBulkInput() {
+        const raw = document.getElementById('bulkSearchInput').value || '';
+        const terms = raw
+            .split(/[\n,;]+/)
+            .map(s => s.trim())
+            .filter(s => s.length > 0);
+        return [...new Set(terms)];
+    }
+
+    function updateBulkCount() {
+        const terms = parseBulkInput();
+        document.getElementById('bulkSearchCount').textContent =
+            `${terms.length} value${terms.length !== 1 ? 's' : ''} entered`;
+    }
+
+    function updateBulkBar() {
+        const bar = document.getElementById('bulkActiveBar');
+        const txt = document.getElementById('bulkActiveText');
+        if (bulkTerms.length > 0) {
+            txt.textContent = `Bulk filter active: ${bulkTerms.length} value${bulkTerms.length !== 1 ? 's' : ''} — matching VM Name (exact), IP Address, and All IPs`;
+            bar.style.display = '';
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+
+    window.openBulkSearch = function() {
+        if (bulkTerms.length > 0) {
+            document.getElementById('bulkSearchInput').value = bulkTerms.join('\n');
+        }
+        updateBulkCount();
+        const modal = new bootstrap.Modal(document.getElementById('bulkSearchModal'));
+        modal.show();
+        document.getElementById('bulkSearchInput').oninput = updateBulkCount;
+    };
+
+    window.applyBulkSearch = function() {
+        bulkTerms  = parseBulkInput();
+        searchTerm = '';
+        document.getElementById('vmSearch').value = '';
+        bootstrap.Modal.getInstance(document.getElementById('bulkSearchModal')).hide();
+        updateBulkBar();
+        currentPage = 1;
+        loadVMs();
+    };
+
+    window.clearBulkSearch = function() {
+        bulkTerms  = [];
+        searchTerm = '';
+        document.getElementById('vmSearch').value = '';
+        document.getElementById('bulkSearchInput').value = '';
+        updateBulkBar();
+        currentPage = 1;
+        loadVMs();
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('vmSearch')?.addEventListener('input', filterTable);
+        document.getElementById('envSelect')?.addEventListener('change', onEnvChange);
+        populateEnvSelect();
+        Promise.all([loadVmwareRuns(), loadHypervRuns()]).then(() => loadVMs());
+    });
+</script>
+{% endblock %}

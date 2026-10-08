@@ -1,0 +1,15 @@
+.env
+*.env
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.log
+*.db
+instance/
+.vscode/
+.idea/
+
+# Large database dumps
+inventory_app_v3_reconstructed/database_schema_test_new_ai_doc_8-10-2026.sql
+inventory_app_v3_reconstructed/database_schema_test_new_ai_doc_21-9-2026.sql
