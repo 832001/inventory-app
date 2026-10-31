@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group" id="runPickerBox"></div>
+    <div class="control-group">
+        <div class="platform-filter" id="platformFilter"></div>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn active" data-power="all" onclick="setPowerFilter('all')">All States</span>
+            <span class="platform-filter-btn"        data-power="on"  onclick="setPowerFilter('on')">
+                <i class="bi bi-circle-fill text-success" style="font-size:.6rem"></i> On
+            </span>
+            <span class="platform-filter-btn"        data-power="off" onclick="setPowerFilter('off')">
+                <i class="bi bi-circle-fill text-danger" style="font-size:.6rem"></i> Off
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <div class="platform-filter">
+            <span class="platform-filter-btn active" data-template="all" onclick="setTemplateFilter('all')">All VMs</span>
+            <span class="platform-filter-btn"        data-template="no"  onclick="setTemplateFilter('no')">
+                <i class="bi bi-pc-display"></i> VMs Only
+            </span>
+            <span class="platform-filter-btn"        data-template="yes" onclick="setTemplateFilter('yes')">
+                <i class="bi bi-copy"></i> Templates Only
+            </span>
+        </div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:220px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="vmSearch" class="form-control" placeholder="Search VMs, IP, OS…">
+        </div>
+        <button class="btn btn-outline-secondary btn-sm" onclick="openBulkSearch()"
+                title="Bulk search by VM names or IPs">
+            <i class="bi bi-list-ul"></i>
+        </button>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportVMs('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportVMs('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk active indicator -->
+<div id="bulkActiveBar" class="alert alert-info align-items-center gap-2 mb-2 py-2"
+     style="display:none;font-size:.85rem">
+    <i class="bi bi-funnel-fill"></i>
+    <span id="bulkActiveText"></span>
+    <button class="btn btn-sm btn-outline-secondary ms-auto py-0" onclick="clearBulkSearch()">
+        <i class="bi bi-x me-1"></i>Clear bulk filter
+    </button>
+</div>
+
+<div class="d-flex align-items-center justify-content-between mb-2 flex-wrap gap-2">
+    <span class="text-muted small" id="vm-pager-info">Loading…</span>
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" id="vm-prev" onclick="vmPagePrev()" disabled>
+            <i class="bi bi-chevron-left"></i> Prev
+        </button>
+        <span class="text-muted small" id="vm-page-label"></span>
+        <button class="btn btn-outline-secondary btn-sm" id="vm-next" onclick="vmPageNext()" disabled>
+            Next <i class="bi bi-chevron-right"></i>
+        </button>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th>
+                <th>VM Name</th>
+                <th>Environment / Cluster</th>
+                <th>Site</th>
+                <th>CPU</th>
+                <th>RAM (GB)</th>
+                <th>OS</th>
+                <th>IP Address</th>
+                <th>All IPs</th>
+                <th>Disk Count</th>
+                <th>Total Disk (GB)</th>
+                <th>Template</th>
+                <th>Power State</th>
+            </tr>
+        </thead>
+        <tbody id="vmsTable">
+            <tr><td colspan="13" class="text-center text-muted py-3">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+            </td></tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="d-flex align-items-center justify-content-between mt-2 flex-wrap gap-2">
+    <span class="text-muted small" id="vm-pager-info-bottom"></span>
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-outline-secondary btn-sm" id="vm-prev-bottom" onclick="vmPagePrev()" disabled>
+            <i class="bi bi-chevron-left"></i> Prev
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" id="vm-next-bottom" onclick="vmPageNext()" disabled>
+            Next <i class="bi bi-chevron-right"></i>
+        </button>
+    </div>
+</div>
+
+<!-- Bulk search modal -->
+<div class="modal fade" id="bulkSearchModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-list-ul me-2"></i>Bulk Search</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2">
+                    Paste VM names or IP addresses — one per line, or comma/semicolon separated.<br>
+                    Searches <strong>VM Name</strong> (exact), <strong>IP Address</strong>, and <strong>All IPs</strong>.<br>
+                    Any VM matching <em>any</em> of the values will be shown.
+                </p>
+                <textarea id="bulkSearchInput" class="form-control font-monospace" rows="12"
+                          placeholder="e.g.&#10;10.19.25.100&#10;10.19.25.222&#10;web-server-01&#10;db-prod-02"></textarea>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <span class="text-muted small" id="bulkSearchCount">0 values entered</span>
+                    <button class="btn btn-outline-secondary btn-sm"
+                            onclick="document.getElementById('bulkSearchInput').value='';updateBulkCount()">
+                        <i class="bi bi-x-circle me-1"></i>Clear
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="applyBulkSearch()">
+                    <i class="bi bi-search me-1"></i>Search
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/hv_common.js') }}"></script>
+<script>
+(function () {
+    let powerFilter = "all";
+    let templateFilter = "all";
+    let searchTerm = "";
+    let bulkTerms = [];
+    let currentPage = 1, totalPages = 1, totalVMs = 0;
+    const perPage = 100;
+    const COLS = 13;
+    let debounceTimer = null;
+
+    function setActive(attr, value) {
+        document.querySelectorAll(`.platform-filter-btn[data-${attr}]`).forEach(btn =>
+            btn.classList.toggle('active', btn.dataset[attr] === value));
+    }
+    window.setPowerFilter    = function (v) { powerFilter = v;    setActive('power', v);    currentPage = 1; loadVMs(); };
+    window.setTemplateFilter = function (v) { templateFilter = v; setActive('template', v); currentPage = 1; loadVMs(); };
+
+    function filterTable() {
+        if (bulkTerms.length > 0) { bulkTerms = []; updateBulkBar(); }   // typing clears bulk mode
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            searchTerm = document.getElementById('vmSearch').value.trim();
+            currentPage = 1;
+            loadVMs();
+        }, 300);
+    }
+
+    function updatePager() {
+        const info = totalVMs > 0
+            ? `Showing ${(currentPage - 1) * perPage + 1}–${Math.min(currentPage * perPage, totalVMs)} of ${totalVMs.toLocaleString()} VMs`
+            : "No VMs found";
+        ['vm-pager-info', 'vm-pager-info-bottom'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = info; });
+        const label = document.getElementById('vm-page-label');
+        if (label) label.textContent = `Page ${currentPage} / ${totalPages}`;
+        ['vm-prev', 'vm-prev-bottom'].forEach(id => { document.getElementById(id).disabled = currentPage <= 1; });
+        ['vm-next', 'vm-next-bottom'].forEach(id => { document.getElementById(id).disabled = currentPage >= totalPages; });
+    }
+    window.vmPagePrev = function () { if (currentPage > 1)          { currentPage--; loadVMs(); } };
+    window.vmPageNext = function () { if (currentPage < totalPages) { currentPage++; loadVMs(); } };
+
+    function renderTable(data) {
+        const tbody = document.getElementById('vmsTable');
+        const vms = HV.tagRows(data.data || []);
+        totalVMs = data.total || 0;
+        totalPages = data.pages || 1;
+        currentPage = data.page || 1;
+
+        if (!vms.length) {
+            tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3">No VMs found</td></tr>`;
+            updatePager();
+            return;
+        }
+        const esc = HV.esc, n = HV.toNum;
+        tbody.innerHTML = vms.map(vm => {
+            const vmName = vm.vm_name || '-';
+            let link = `/vm/${encodeURIComponent(vmName)}`;          // scope the detail page to this exact VM
+            if (vm.vm_uuid) link += `?uuid=${encodeURIComponent(vm.vm_uuid)}`;
+            else if (vm.ip_address) link += `?ip=${encodeURIComponent(vm.ip_address)}`;
+            const allIps = vm.all_ips && vm.all_ips !== vm.ip_address ? esc(vm.all_ips) : esc(vm.ip_address || '-');
+            const template = vm.is_template ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="text-muted">No</span>';
+            const env = esc(vm.vcenter_name || '-') + (vm.cluster_name ? ` <span class="text-muted small">/ ${esc(vm.cluster_name)}</span>` : '');
+            return `<tr>
+                <td>${HV.platformCell(vm._pkey)}</td>
+                <td><a href="${link}" class="text-primary fw-semibold">${esc(vmName)}</a></td>
+                <td>${env}</td>
+                <td>${esc(vm.site_code || '-')}</td>
+                <td>${n(vm.cpu)}</td>
+                <td>${(n(vm.ram_mb) / 1024).toFixed(1)}</td>
+                <td>${esc(vm.os || '-')}</td>
+                <td>${esc(vm.ip_address || '-')}</td>
+                <td class="small text-muted">${allIps}</td>
+                <td class="text-center">${n(vm.disk_count)}</td>
+                <td class="text-center">${n(vm.total_disk_gb).toFixed(1)}</td>
+                <td class="text-center">${template}</td>
+                <td class="text-center">${HV.powerBadge(vm.power_state)}</td>
+            </tr>`;
+        }).join('');
+        updatePager();
+    }
+
+    // filters go to the server (the list is paged)
+    function extraParams(extra) {
+        const e = {};
+        if (HV.state.platformFilter !== 'all') e.platform = HV.state.platformFilter;
+        if (powerFilter !== 'all')    e.power_state = powerFilter;
+        if (templateFilter !== 'all') e.is_template = templateFilter;
+        if (bulkTerms.length > 0)     e.bulk_q = bulkTerms.join(',');
+        else if (searchTerm)          e.q = searchTerm;
+        return Object.assign(e, extra || {});
+    }
+
+    window.exportVMs = function (fmt) {
+        window.location.href = '/api/vms/export' + HV.apiQuery(extraParams({ per_page: 1000000, format: fmt }));
+    };
+
+    function loadVMs() {
+        const tbody = document.getElementById("vmsTable");
+        tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading VMs…</td></tr>`;
+        fetch('/api/vms' + HV.apiQuery(extraParams({ page: currentPage, per_page: perPage })))
+            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(renderTable)
+            .catch(err => {
+                console.error("Error loading VMs:", err);
+                tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-danger py-3">Failed to load VMs</td></tr>`;
+            });
+    }
+
+    // ── Bulk search ───────────────────────────────────────────────
+    function parseBulkInput() {
+        const raw = document.getElementById('bulkSearchInput').value || '';
+        return [...new Set(raw.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean))];
+    }
+    window.updateBulkCount = function () {
+        const t = parseBulkInput();
+        document.getElementById('bulkSearchCount').textContent = `${t.length} value${t.length !== 1 ? 's' : ''} entered`;
+    };
+    function updateBulkBar() {
+        const bar = document.getElementById('bulkActiveBar');
+        if (bulkTerms.length > 0) {
+            document.getElementById('bulkActiveText').textContent =
+                `Bulk filter active: ${bulkTerms.length} value${bulkTerms.length !== 1 ? 's' : ''} — matching VM Name (exact), IP Address, and All IPs`;
+            bar.style.display = 'flex';
+        } else {
+            bar.style.display = 'none';
+        }
+    }
+    window.openBulkSearch = function () {
+        if (bulkTerms.length > 0) document.getElementById('bulkSearchInput').value = bulkTerms.join('\n');
+        window.updateBulkCount();
+        new bootstrap.Modal(document.getElementById('bulkSearchModal')).show();
+        document.getElementById('bulkSearchInput').oninput = window.updateBulkCount;
+    };
+    window.applyBulkSearch = function () {
+        bulkTerms = parseBulkInput();
+        searchTerm = '';
+        document.getElementById('vmSearch').value = '';
+        bootstrap.Modal.getInstance(document.getElementById('bulkSearchModal')).hide();
+        updateBulkBar();
+        currentPage = 1;
+        loadVMs();
+    };
+    window.clearBulkSearch = function () {
+        bulkTerms = []; searchTerm = '';
+        document.getElementById('vmSearch').value = '';
+        document.getElementById('bulkSearchInput').value = '';
+        updateBulkBar();
+        currentPage = 1;
+        loadVMs();
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('vmSearch').addEventListener('input', filterTable);
+        HV.init({
+            pickerBox: 'runPickerBox', filterBox: 'platformFilter', envSelect: 'envSelect',
+            filterFromPlatforms: true,                          // paged list: buttons come from the hypervisor list
+            onRunChange:    () => { currentPage = 1; loadVMs(); },
+            onFilterChange: () => { currentPage = 1; loadVMs(); }
+        }).then(() => {
+            HV.renderPlatformFilter([]);
+            return fetch('/api/vcenters').then(r => r.json())
+                .then(list => HV.populateEnvSelect(list, 'name'))
+                .catch(err => console.error("Failed to load environments:", err));
+        }).then(loadVMs);
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group" id="runPickerBox"></div>
+    <div class="control-group">
+        <div class="platform-filter" id="platformFilter"></div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="clusterSearch" class="form-control" placeholder="Search clusters…">
+        </div>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportClusters('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportClusters('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>Cluster</th><th>Environment</th><th>Site</th><th>Datacenter</th>
+                <th>Hosts</th><th>VMs</th><th>CPU Cores</th><th>Total CPU (MHz)</th>
+                <th>CPU Threads</th><th>Used CPU (MHz)</th><th>Free CPU (MHz)</th><th>CPU %</th>
+                <th>Total Mem</th><th>Used Mem</th><th>Free Mem</th><th>Mem %</th>
+                <th>Total Storage</th><th>Used Storage</th><th>Free Storage</th><th>Storage %</th>
+                <th>HA</th><th>DRS</th><th>Hosts</th><th>Datastores</th>
+            </tr>
+        </thead>
+        <tbody id="clustersTable">
+            <tr><td colspan="25" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script src="{{ url_for('static', filename='js/hv_common.js') }}"></script>
+<script>
+(function () {
+    let allClusters = [];
+    let searchTerm = "";
+    const COLS = 25;
+
+    function renderTable() {
+        const tbody = document.getElementById('clustersTable');
+        if (!tbody) return;
+
+        const filtered = allClusters.filter(c => {
+            if (!HV.rowMatches(c, 'vcenter_name')) return false;
+            if (searchTerm) {
+                const hay = [c.cluster_name, c.vcenter_name, c.datacenter_name, c.site_code].map(x => (x || '').toLowerCase());
+                if (!hay.some(x => x.includes(searchTerm))) return false;
+            }
+            return true;
+        });
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3">No clusters found</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = filtered.map(c => {
+            const n = HV.toNum, esc = HV.esc;
+            const name = c.cluster_name || '-';
+            const freeMem = n(c.free_memory_mb) || (n(c.total_memory_mb) - n(c.used_memory_mb));
+            const freeStor = n(c.free_storage_gb) || (n(c.total_storage_gb) - n(c.used_storage_gb));
+            // carry the pinned runs + this cluster's environment to the next page
+            const hostsUrl = HV.pageUrl('/hosts',      { cluster: name, vcenter: c.vcenter_name });
+            const dsUrl    = HV.pageUrl('/datastores', { cluster: name, vcenter: c.vcenter_name });
+            return `<tr>
+                <td>${HV.platformCell(c._pkey)}</td>
+                <td><a href="/cluster/${encodeURIComponent(name)}" class="text-primary fw-semibold">${esc(name)}</a></td>
+                <td>${esc(c.vcenter_name || '-')}</td>
+                <td>${esc(c.site_code || '-')}</td>
+                <td>${esc(c.datacenter_name || '-')}</td>
+                <td>${n(c.num_hosts)}</td><td>${n(c.num_vms)}</td>
+                <td>${n(c.total_cores) || '-'}</td>
+                <td>${n(c.total_cpu_mhz).toLocaleString()}</td>
+                <td>${n(c.num_cpu_threads)}</td>
+                <td>${n(c.used_cpu_mhz).toLocaleString()}</td>
+                <td>${n(c.free_cpu_mhz).toLocaleString()}</td>
+                <td>${HV.bar(c.cpu_usage_percent)}</td>
+                <td>${HV.fmtMB(c.total_memory_mb)}</td><td>${HV.fmtMB(c.used_memory_mb)}</td><td>${HV.fmtMB(freeMem)}</td>
+                <td>${HV.bar(c.memory_usage_percent)}</td>
+                <td>${HV.fmtGB(c.total_storage_gb)}</td><td>${HV.fmtGB(c.used_storage_gb)}</td><td>${HV.fmtGB(freeStor)}</td>
+                <td>${HV.bar(c.storage_usage_percent)}</td>
+                <td>${HV.flag(c.ha_enabled)}</td>
+                <td>${HV.flag(c.drs_enabled)}</td>
+                <td><a href="${hostsUrl}" class="btn btn-xs btn-outline-primary">Hosts</a></td>
+                <td><a href="${dsUrl}" class="btn btn-xs btn-outline-secondary">Datastores</a></td>
+            </tr>`;
+        }).join('');
+        HV.animateBars(tbody);
+    }
+
+    function loadData() {
+        const tbody = document.getElementById("clustersTable");
+        if (tbody) tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading clusters…</td></tr>`;
+        fetch("/api/clusters" + HV.apiQuery())
+            .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+            .then(data => {
+                allClusters = HV.tagRows(Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []));
+                HV.renderPlatformFilter(allClusters);
+                HV.populateEnvSelect(allClusters, 'vcenter_name');
+                renderTable();
+            })
+            .catch(err => {
+                console.error("Error loading clusters:", err);
+                if (tbody) tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-danger py-3">Failed to load clusters</td></tr>`;
+            });
+    }
+
+    window.exportClusters = function (fmt) { window.location.href = HV.exportUrl('/api/clusters/export', fmt); };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('clusterSearch').addEventListener('input', e => { searchTerm = e.target.value.toLowerCase(); renderTable(); });
+        HV.init({ pickerBox: 'runPickerBox', filterBox: 'platformFilter', envSelect: 'envSelect',
+                  onRunChange: loadData, onFilterChange: renderTable }).then(loadData);
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,3 @@
+Python syntax validation
+========================
+PASS

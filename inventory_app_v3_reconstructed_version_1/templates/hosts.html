@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group" id="runPickerBox"></div>
+    <div class="control-group">
+        <div class="platform-filter" id="platformFilter"></div>
+    </div>
+    <div class="control-group">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Environment:</label>
+        <select id="envSelect" class="form-select form-select-sm" style="min-width:180px;">
+            <option value="">— All Environments —</option>
+        </select>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="hostSearch" class="form-control" placeholder="Search hosts…">
+        </div>
+        <div class="dropdown d-inline-block">
+            <button class="btn btn-success btn-sm dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportHosts('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportHosts('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div id="clusterBanner" class="alert alert-info py-1 px-3 small align-items-center justify-content-between" style="display:none;">
+    <span><i class="bi bi-funnel me-1"></i>Cluster filter: <b id="clusterBannerName"></b></span>
+    <a href="#" id="clusterBannerClear" class="ms-3">Show all clusters</a>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>Host Name</th><th>IP</th><th>Vendor</th><th>Environment</th>
+                <th>Site</th><th>Cluster</th><th>Datacenter</th><th>CPU Cores</th><th>CPU Model</th>
+                <th>CPU MHz</th><th>Memory Total</th><th>Memory Used</th><th>Memory %</th>
+                <th>VMs</th><th>Version</th><th>Power State</th><th>Connection State</th>
+            </tr>
+        </thead>
+        <tbody id="hostsTable">
+            <tr><td colspan="18" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script src="{{ url_for('static', filename='js/hv_common.js') }}"></script>
+<script>
+(function () {
+    let allHosts = [];
+    let searchTerm = "";
+    const COLS = 18;
+    const clusterParam = new URLSearchParams(window.location.search).get('cluster') || "";
+
+    function renderTable() {
+        const tbody = document.getElementById('hostsTable');
+        if (!tbody) return;
+        const filtered = allHosts.filter(h => {
+            if (!HV.rowMatches(h, 'vcenter_name')) return false;
+            if (searchTerm) {
+                const hay = [h.host_name, h.ip_address, h.cluster_name, h.vcenter_name, h.site_code].map(x => (x || '').toLowerCase());
+                if (!hay.some(x => x.includes(searchTerm))) return false;
+            }
+            return true;
+        });
+        if (!filtered.length) {
+            tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3">No hosts found</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = filtered.map(h => {
+            const n = HV.toNum, esc = HV.esc;
+            const total = n(h.memory_total_gb), used = n(h.memory_used_gb);
+            const memPct = total > 0 ? (used / total * 100) : 0;
+            return `<tr>
+                <td>${HV.platformCell(h._pkey)}</td>
+                <td><a href="/host/${encodeURIComponent(h.host_name)}" class="text-primary fw-semibold">${esc(h.host_name)}</a></td>
+                <td>${esc(h.ip_address || '-')}</td>
+                <td>${esc(h.vendor || '-')}</td>
+                <td>${esc(h.vcenter_name || '-')}</td>
+                <td>${esc(h.site_code || '-')}</td>
+                <td>${esc(h.cluster_name || '-')}</td>
+                <td>${esc(h.datacenter_name || '-')}</td>
+                <td>${n(h.cpu_cores)}</td>
+                <td>${esc(h.cpu_model || '-')}</td>
+                <td>${n(h.cpu_mhz).toLocaleString()}</td>
+                <td>${HV.fmtGB(total)}</td>
+                <td>${HV.fmtGB(used)}</td>
+                <td>${HV.bar(memPct)}</td>
+                <td>${n(h.num_vms)}</td>
+                <td>${esc(h.esxi_version || '-')}</td>
+                <td>${HV.stateBadge(h.power_state, 'bi-power')}</td>
+                <td>${HV.stateBadge(h.connection_state, 'bi-plug')}</td>
+            </tr>`;
+        }).join('');
+        HV.animateBars(tbody);
+    }
+
+    function loadData() {
+        const tbody = document.getElementById("hostsTable");
+        if (tbody) tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading hosts…</td></tr>`;
+        fetch("/api/hosts" + HV.apiQuery({ cluster: clusterParam }))
+            .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+            .then(data => {
+                allHosts = HV.tagRows(Array.isArray(data) ? data : (Array.isArray(data.data) ? data.data : []));
+                HV.renderPlatformFilter(allHosts);
+                HV.populateEnvSelect(allHosts, 'vcenter_name');
+                renderTable();
+            })
+            .catch(err => {
+                console.error("Error loading hosts:", err);
+                if (tbody) tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-danger py-3">Failed to load hosts</td></tr>`;
+            });
+    }
+
+    window.exportHosts = function (fmt) { window.location.href = HV.exportUrl('/api/hosts/export', fmt); };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        if (clusterParam) {                                   // opened from the Clusters page
+            const b = document.getElementById('clusterBanner');
+            b.style.display = 'flex';
+            document.getElementById('clusterBannerName').textContent = clusterParam;
+            document.getElementById('clusterBannerClear').addEventListener('click', e => {
+                e.preventDefault();
+                const u = new URL(window.location.href); u.searchParams.delete('cluster'); window.location.href = u.toString();
+            });
+        }
+        document.getElementById('hostSearch').addEventListener('input', e => { searchTerm = e.target.value.toLowerCase(); renderTable(); });
+        HV.init({ pickerBox: 'runPickerBox', filterBox: 'platformFilter', envSelect: 'envSelect',
+                  onRunChange: loadData, onFilterChange: renderTable }).then(loadData);
+    });
+})();
+</script>
+{% endblock %}

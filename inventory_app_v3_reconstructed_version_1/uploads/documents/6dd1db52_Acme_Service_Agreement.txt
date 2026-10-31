@@ -1,0 +1,48 @@
+SERVICE AGREEMENT
+
+Between:            Acme Corporation Ltd ("Acme")
+                    12 Harbour Street, Cairo, Egypt
+                    Tax ID: EG-AC-44871
+
+And:                Bluewave Systems LLC ("Bluewave")
+                    88 Innovation Drive, Dubai, UAE
+                    Tax ID: AE-BW-20934
+
+Effective date:     2026-01-15
+Expiry date:        2027-01-14
+Renewal:            Auto-renews annually unless cancelled 60 days before expiry
+
+Contract value:     USD 240,000
+Payment terms:      Quarterly, USD 60,000 due within 30 days of invoice
+Late fee:           2% per month on overdue amounts
+
+SCOPE OF SERVICES
+
+1. Bluewave will provide 24/7 monitoring of Acme's production servers,
+   excluding public holidays.
+2. Monthly health reports due by the 5th of the following month.
+3. Bluewave shall maintain response times: Critical = 15 minutes,
+   High = 1 hour, Medium = 4 hours.
+
+KEY PERSONNEL
+
+Name                Role                    Contact
+------              ------                  -------
+Sarah Mahmoud       Account Manager         s.mahmoud@bluewave.ae
+Daniel Petrov       Lead Engineer           d.petrov@bluewave.ae
+Layla Hassan        Billing Contact         billing@bluewave.ae
+
+TERMINATION
+
+Either party may terminate for material breach with 30 days' written
+notice if the breach is not cured. Early termination without cause
+requires 90 days' notice and payment of the remaining quarter's fees.
+
+GOVERNING LAW
+
+This agreement is governed by the laws of the Arab Republic of Egypt.
+
+Signed:
+  Acme Corporation Ltd       Bluewave Systems LLC
+  Omar Farouk, CEO           Rashid Al-Mansouri, CEO
+  Dated: 2026-01-10          Dated: 2026-01-11

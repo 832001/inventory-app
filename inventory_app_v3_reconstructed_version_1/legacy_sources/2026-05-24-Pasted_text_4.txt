@@ -1,0 +1,294 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+    <h5 class="mb-0 fw-bold">
+        <i class="bi bi-display me-2 text-primary"></i>Global vCenter Dashboard
+    </h5>
+</div>
+
+<!-- fixed the typo: <div?  -> <div> -->
+<div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+        <label class="text-muted small mb-0 fw-semibold text-nowrap">Inventory run:</label>
+        <select id="runFilter" class="form-select form-select-sm" style="width:230px;"
+                onchange="loadDashboard()">
+            <option value="">Select Run</option>
+        </select>
+
+        <button class="btn btn-outline-primary btn-sm" onclick="goToPage('hosts')">
+            <i class="bi bi-hdd-rack me-1"></i>Hosts
+        </button>
+        <button class="btn btn-outline-success btn-sm" onclick="goToPage('clusters')">
+            <i class="bi bi-diagram-3 me-1"></i>Clusters
+        </button>
+        <button class="btn btn-outline-warning btn-sm" onclick="goToPage('datastores')">
+            <i class="bi bi-device-hdd me-1"></i>Datastores
+        </button>
+        <button class="btn btn-outline-info btn-sm" onclick="goToPage('vms')">
+            <i class="bi bi-cpu me-1"></i>VMs
+        </button>
+
+        <button class="btn btn-success btn-sm"
+                onclick="exportTableToCSV('inventoryTable','dashboard_export.csv')">
+            <i class="bi bi-download me-1"></i>Export CSV
+        </button>
+
+        {% if session.role == "superadmin" %}
+        <button class="btn btn-sm btn-danger ms-1" id="refresh-btn"
+                onclick="runInventoryScript()"
+                title="Pull latest inventory from all vCenters">
+            <i class="bi bi-arrow-clockwise me-1"></i>Refresh Inventory
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+{% if session.role == "superadmin" %}
+<div id="script-panel" style="display:none;" class="mb-3">
+    <div class="card border-0 shadow-sm">
+        <div class="card-header py-2 d-flex align-items-center justify-content-between"
+             style="background:linear-gradient(90deg,#111827,#1f2937);">
+            <span class="text-white small fw-semibold">
+                <i class="bi bi-terminal me-2"></i>Inventory Script Output
+            </span>
+            <button class="btn btn-sm btn-link text-secondary p-0"
+                    onclick="document.getElementById('script-panel').style.display='none'">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+        <div class="card-body p-0">
+            <div id="script-status" class="px-3 py-2 border-bottom small"
+                 style="background:#f8f9fa; display:none;"></div>
+            <pre id="scriptOutput"
+                 style="background:#0d1117;color:#e6edf3;margin:0;padding:16px;
+                        min-height:120px;max-height:320px;overflow-y:auto;
+                        font-size:12px;line-height:1.6;font-family:'Courier New',monospace;">
+<span style="color:#484f58;">Waiting for script output…</span></pre>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="table-responsive">
+    <table class="table table-bordered table-hover" id="inventoryTableWrapper">
+        <thead class="table-dark">
+            <tr>
+                <th>Select</th>
+                <th>vCenter</th>
+                <th>IP</th>
+                <th>Clusters</th>
+                <th>Hosts</th>
+                <th>Datastores</th>
+                <th>VMs</th>
+                <th>Total CPU</th>
+                <th>Used CPU</th>
+                <th>Free CPU</th>
+                <th>Total Memory</th>
+                <th>Used Memory</th>
+                <th>Free Memory</th>
+                <th>Total Storage</th>
+                <th>Used Storage</th>
+                <th>Free Storage</th>
+                <th>Sub CPU</th>
+                <th>Sub Memory</th>
+                <th>Sub Storage</th>
+            </tr>
+        </thead>
+        <tbody id="inventoryTable">
+            <tr><td colspan="20" class="text-center text-muted py-4">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading inventory…
+            </td></tr>
+        </tbody>
+    </table>
+</div>
+
+<!-- ANIMATION STYLES (added without breaking any existing style) -->
+<style>
+    /* existing styles are kept, we only add animations */
+    @keyframes fadeSlideUp {
+        0% { opacity: 0; transform: translateY(12px); }
+        100% { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    /* table rows animation */
+    #inventoryTable tr {
+        animation: fadeSlideUp 0.3s ease forwards;
+        opacity: 0;  /* start invisible, animation makes visible */
+    }
+
+    /* staggered delay for rows */
+    #inventoryTable tr:nth-child(1) { animation-delay: 0.00s; }
+    #inventoryTable tr:nth-child(2) { animation-delay: 0.02s; }
+    #inventoryTable tr:nth-child(3) { animation-delay: 0.04s; }
+    #inventoryTable tr:nth-child(4) { animation-delay: 0.06s; }
+    #inventoryTable tr:nth-child(5) { animation-delay: 0.08s; }
+    #inventoryTable tr:nth-child(6) { animation-delay: 0.10s; }
+    #inventoryTable tr:nth-child(7) { animation-delay: 0.12s; }
+    #inventoryTable tr:nth-child(8) { animation-delay: 0.14s; }
+    #inventoryTable tr:nth-child(9) { animation-delay: 0.16s; }
+    #inventoryTable tr:nth-child(10) { animation-delay: 0.18s; }
+    /* for rows beyond 10, a small generic delay */
+    #inventoryTable tr:nth-child(n+11) { animation-delay: 0.20s; }
+
+    /* row hover effect */
+    #inventoryTable tr:hover {
+        background-color: rgba(13, 110, 253, 0.05) !important;
+        transform: scale(1.002);
+        transition: transform 0.2s ease, background 0.1s ease;
+    }
+
+    /* button click feedback */
+    .btn {
+        transition: transform 0.1s ease, box-shadow 0.2s ease;
+    }
+    .btn:active {
+        transform: scale(0.97);
+    }
+
+    /* select dropdown subtle animation on change */
+    select.form-select {
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    select.form-select:focus {
+        border-color: #86b7fe;
+        box-shadow: 0 0 0 0.25rem rgba(13,110,253,0.25);
+    }
+
+    /* loading shimmer effect for the loading message */
+    .shimmer-text {
+        background: linear-gradient(90deg, #f0f2f5 25%, #e9ecef 50%, #f0f2f5 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.2s infinite linear;
+        border-radius: 6px;
+        display: inline-block;
+        width: 80%;
+        height: 1.2rem;
+    }
+</style>
+
+{% if session.role == "superadmin" %}
+<script>
+// Your original runInventoryScript stays exactly as it was – no changes.
+async function runInventoryScript() {
+    const btn = document.getElementById('refresh-btn');
+    const panel = document.getElementById('script-panel');
+    const output = document.getElementById('scriptOutput');
+    const status = document.getElementById('script-status');
+
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior:'smooth', block:'start' });
+    btn.disabled = true; btn.classList.add('running');
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…';
+    output.innerHTML = '<span style="color:#58a6ff;">▶ Starting inventory collection…</span>\n';
+    status.style.display = 'block';
+    status.innerHTML = `<div class="d-flex align-items-center gap-2 text-muted">
+        <div class="spinner-border spinner-border-sm text-primary"></div>
+        <span>Running <code>get_inventory.py</code> — may take up to 5 minutes…</span></div>`;
+
+    const t0 = Date.now();
+    function esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    try {
+        const res = await fetch('/api/run_script', { method:'POST' });
+        const data = await res.json();
+        const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+
+        if (data.status === 'success') {
+            let out = esc(data.stdout)
+                .replace(/(ok=\d+)/g,'<span class="ok">$1</span>')
+                .replace(/(ERROR|CRITICAL)/g,'<span class="err">$1</span>')
+                .replace(/(WARNING)/g,'<span class="warn">$1</span>')
+                .replace(/(INFO|Running)/g,'<span class="info">$1</span>');
+
+            output.innerHTML = `<span class="info">▶ Finished in ${elapsed}s (exit: ${data.returncode})</span>\n\n`
+                + (out || '<span style="color:#484f58;">(no output)</span>')
+                + (data.stderr ? '\n<span class="warn">─── STDERR ───</span>\n'+esc(data.stderr) : '');
+
+            status.innerHTML = data.returncode===0
+                ? `<div class="d-flex align-items-center gap-2 text-success">
+                     <i class="bi bi-check-circle-fill"></i>
+                     <span>Updated in <strong>${elapsed}s</strong>.</span>
+                     <button class="btn btn-sm btn-outline-success ms-auto" onclick="location.reload()">
+                       <i class="bi bi-arrow-clockwise me-1"></i>Reload Dashboard
+                     </button></div>`
+                : `<div class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Exit code ${data.returncode}</div>`;
+        } else {
+            output.innerHTML = `<span class="err">✕ ${esc(data.error||'Unknown error')}</span>`;
+            status.innerHTML = `<div class="text-danger small"><i class="bi bi-x-circle me-1"></i>Script failed.</div>`;
+        }
+    } catch(err) {
+        output.innerHTML = `<span class="err">✕ Request failed: ${esc(err.message)}</span>`;
+        status.innerHTML = `<div class="text-danger small"><i class="bi bi-x-circle me-1"></i>Could not reach server.</div>`;
+    } finally {
+        btn.disabled=false; btn.classList.remove('running');
+        btn.innerHTML='<i class="bi bi-arrow-clockwise me-1"></i>Refresh Inventory';
+        output.scrollTop=output.scrollHeight;
+    }
+}
+</script>
+{% endif %}
+
+<!-- Small script to re-trigger row animation after loadDashboard updates the table -->
+<script>
+    // Preserve original loadDashboard if it exists, then enhance it.
+    // If loadDashboard is not defined yet, we'll wait and hook into it.
+    (function() {
+        let originalLoadDashboard = window.loadDashboard;
+
+        // Function to apply animation classes to new rows (already handled by CSS, but we force re-animation on dynamic content)
+        function animateTableRows() {
+            const rows = document.querySelectorAll('#inventoryTable tr');
+            // Remove and re-add animation class to restart animation for newly added rows
+            rows.forEach(row => {
+                row.style.animation = 'none';
+                row.offsetHeight; // force reflow
+                row.style.animation = '';
+            });
+        }
+
+        // Override loadDashboard only if it exists, otherwise wait for it
+        if (typeof originalLoadDashboard === 'function') {
+            window.loadDashboard = function() {
+                // call original
+                const result = originalLoadDashboard.apply(this, arguments);
+                // after a short delay (to let DOM update), re-animate rows
+                setTimeout(animateTableRows, 150);
+                return result;
+            };
+        } else {
+            // If loadDashboard is defined later (e.g., in a global script), observe when it's set
+            const descriptor = Object.getOwnPropertyDescriptor(window, 'loadDashboard');
+            if (!descriptor || descriptor.configurable) {
+                let existing = window.loadDashboard;
+                Object.defineProperty(window, 'loadDashboard', {
+                    configurable: true,
+                    get: function() { return existing; },
+                    set: function(fn) {
+                        existing = fn;
+                        if (typeof existing === 'function') {
+                            const wrapped = function() {
+                                const res = existing.apply(this, arguments);
+                                setTimeout(animateTableRows, 150);
+                                return res;
+                            };
+                            existing = wrapped;
+                        }
+                    }
+                });
+            }
+        }
+
+        // Also animate rows when the page initially loads (in case table is populated before loadDashboard call)
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(animateTableRows, 200);
+        });
+    })();
+</script>
+
+{% endblock %}
