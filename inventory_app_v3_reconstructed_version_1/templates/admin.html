@@ -1,0 +1,967 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h4 class="mb-0 fw-bold">
+            <i class="bi bi-shield-lock-fill me-2 text-danger"></i>Admin Panel
+        </h4>
+        <small class="text-muted">Users · Instances · Hypervisor types — superadmin only</small>
+    </div>
+    <span class="badge bg-danger px-3 py-2 fs-6">
+        <i class="bi bi-shield-fill me-1"></i>Super Admin
+    </span>
+</div>
+
+<ul class="nav nav-tabs mb-3" id="adminTabs">
+    <li class="nav-item">
+        <button class="nav-link active" data-tab="users">
+            <i class="bi bi-people-fill me-1"></i>Users
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-tab="instances">
+            <i class="bi bi-hdd-network me-1"></i>Instances
+            <span class="badge bg-secondary ms-1" id="inst-count">—</span>
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-tab="types">
+            <i class="bi bi-stack me-1"></i>Hypervisor Types
+            <span class="badge bg-secondary ms-1" id="type-count">—</span>
+        </button>
+    </li>
+</ul>
+
+<!-- ══════════════════════════════════════════════
+     TAB: USERS
+══════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-users" style="display:block;">
+    <div class="row g-4">
+        <div class="col-lg-8">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header d-flex align-items-center justify-content-between py-3"
+                     style="background:linear-gradient(90deg,#111827,#1f2937);">
+                    <span class="text-white fw-semibold"><i class="bi bi-people-fill me-2"></i>System Users</span>
+                    <span class="badge bg-secondary" id="user-count">—</span>
+                </div>
+                <div class="card-body p-0">
+                    <div id="users-loading" class="text-center text-muted py-5">
+                        <div class="spinner-border spinner-border-sm me-2"></div>Loading users…
+                    </div>
+                    <div class="table-responsive" id="users-wrap" style="display:none;">
+                        <table class="table table-hover mb-0" style="font-size:13px;">
+                            <thead class="table-light">
+                                <tr><th style="width:44px;">#</th><th>Username</th><th>Role</th><th>Created</th>
+                                    <th class="text-end" style="width:170px;">Actions</th></tr>
+                            </thead>
+                            <tbody id="users-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header py-3" style="background:linear-gradient(90deg,#111827,#1f2937);">
+                    <span class="text-white fw-semibold"><i class="bi bi-person-plus-fill me-2"></i>Create New User</span>
+                </div>
+                <div class="card-body">
+                    <div id="create-alert" style="display:none;" class="mb-3"></div>
+                    <div class="mb-3"><label class="adm-lbl">Username</label>
+                        <input id="new-username" type="text" class="form-control form-control-sm"></div>
+                    <div class="mb-3"><label class="adm-lbl">Password</label>
+                        <input id="new-password" type="password" class="form-control form-control-sm"></div>
+                    <div class="mb-4"><label class="adm-lbl">Role</label>
+                        <select id="new-role" class="form-select form-select-sm">
+                            <option value="user" selected>👤 User</option>
+                            <option value="superadmin">🛡 Super Admin</option>
+                        </select></div>
+                    <button id="create-btn" class="btn btn-primary w-100" onclick="createUser()">
+                        <i class="bi bi-person-plus me-1"></i>Create User</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     TAB: INSTANCES
+══════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-instances" style="display:none;">
+
+    <!-- Filter bar -->
+    <div class="filter-bar mb-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="adm-lbl mb-1">Search</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input id="inst-search" type="text" class="form-control"
+                           placeholder="Name, host, user, site, notes…"
+                           oninput="renderInstances()">
+                    <button class="btn btn-outline-secondary" type="button"
+                            onclick="document.getElementById('inst-search').value='';renderInstances();">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <label class="adm-lbl mb-1">Type</label>
+                <select id="inst-filter-type" class="form-select form-select-sm"
+                        onchange="renderInstances()">
+                    <option value="">All types</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="adm-lbl mb-1">Site</label>
+                <select id="inst-filter-site" class="form-select form-select-sm"
+                        onchange="renderInstances()">
+                    <option value="">All sites</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="adm-lbl mb-1">Status</label>
+                <select id="inst-filter-status" class="form-select form-select-sm"
+                        onchange="renderInstances()">
+                    <option value="">All statuses</option>
+                    <option value="active">Active</option>
+                    <option value="disabled">Disabled</option>
+                    <option value="retired">Retired</option>
+                    <option value="failed">Sync failed</option>
+                    <option value="never">Never run</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button class="btn btn-outline-secondary btn-sm flex-grow-1" onclick="clearInstFilters()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+                </button>
+                <button class="btn btn-primary btn-sm flex-grow-1" onclick="openInstanceModal()">
+                    <i class="bi bi-plus-lg me-1"></i>Add
+                </button>
+            </div>
+        </div>
+        <div class="d-flex align-items-center justify-content-between mt-2">
+            <small class="text-muted" id="inst-filter-info"></small>
+            <small class="text-muted">
+                <i class="bi bi-info-circle me-1"></i>
+                Disabling hides an instance from every page — no data is deleted.
+            </small>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div id="inst-loading" class="text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading instances…
+            </div>
+            <div id="inst-empty" class="text-center text-muted py-5" style="display:none;">
+                <i class="bi bi-inbox fs-2 opacity-50 d-block mb-2"></i>
+                No instances match the current filters.
+            </div>
+            <div class="table-responsive" id="inst-wrap" style="display:none;">
+                <table class="table table-hover mb-0" style="font-size:13px;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Type</th>
+                            <th>Name</th>
+                            <th>Site</th>
+                            <th>Host</th>
+                            <th>User</th>
+                            <th>Last sync</th>
+                            <th>Status</th>
+                            <th class="text-end" style="width:280px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inst-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     TAB: TYPES
+══════════════════════════════════════════════ -->
+<div class="tab-pane" id="tab-types" style="display:none;">
+
+    <!-- Filter bar -->
+    <div class="filter-bar mb-3">
+        <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+                <label class="adm-lbl mb-1">Search</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input id="type-search" type="text" class="form-control"
+                           placeholder="Key, display name, adapter module…"
+                           oninput="renderTypes()">
+                    <button class="btn btn-outline-secondary" type="button"
+                            onclick="document.getElementById('type-search').value='';renderTypes();">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <label class="adm-lbl mb-1">Status</label>
+                <select id="type-filter-status" class="form-select form-select-sm"
+                        onchange="renderTypes()">
+                    <option value="">All statuses</option>
+                    <option value="enabled">Enabled</option>
+                    <option value="disabled">Disabled</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="adm-lbl mb-1">Instances</label>
+                <select id="type-filter-has-inst" class="form-select form-select-sm"
+                        onchange="renderTypes()">
+                    <option value="">Any</option>
+                    <option value="yes">Has instances</option>
+                    <option value="no">No instances</option>
+                </select>
+            </div>
+            <div class="col-md-2 d-flex gap-2">
+                <button class="btn btn-outline-secondary btn-sm flex-grow-1" onclick="clearTypeFilters()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset
+                </button>
+                <button class="btn btn-primary btn-sm flex-grow-1" onclick="openTypeModal()">
+                    <i class="bi bi-plus-lg me-1"></i>Add
+                </button>
+            </div>
+        </div>
+        <div class="mt-2">
+            <small class="text-muted" id="type-filter-info"></small>
+        </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+            <div id="type-loading" class="text-center text-muted py-5">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading types…
+            </div>
+            <div id="type-empty" class="text-center text-muted py-5" style="display:none;">
+                <i class="bi bi-inbox fs-2 opacity-50 d-block mb-2"></i>
+                No types match the current filters.
+            </div>
+            <div class="table-responsive" id="type-wrap" style="display:none;">
+                <table class="table table-hover mb-0" style="font-size:13px;">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Key</th><th>Display name</th><th>Adapter</th>
+                            <th>Instances</th><th>Enabled</th>
+                            <th class="text-end" style="width:200px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="type-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     MODALS
+══════════════════════════════════════════════ -->
+
+<!-- Instance create/edit -->
+<div class="modal fade" id="instanceModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(90deg,#111827,#1f2937);">
+        <h6 class="modal-title text-white" id="inst-modal-title">Add Instance</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="inst-id">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="adm-lbl">Hypervisor Type *</label>
+            <select id="inst-type" class="form-select form-select-sm"></select>
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Name * <small class="text-muted">(unique)</small></label>
+            <input id="inst-name" type="text" class="form-control form-control-sm" placeholder="e.g. PROD-VC-5">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Host / IP *</label>
+            <input id="inst-host" type="text" class="form-control form-control-sm" placeholder="10.19.170.99">
+          </div>
+          <div class="col-md-3">
+            <label class="adm-lbl">Port</label>
+            <input id="inst-port" type="number" class="form-control form-control-sm" placeholder="443">
+          </div>
+          <div class="col-md-3">
+            <label class="adm-lbl">Site</label>
+            <input id="inst-site" type="text" class="form-control form-control-sm"
+                   placeholder="B7 / DR / B90 / TESTDEV">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Username</label>
+            <input id="inst-user" type="text" class="form-control form-control-sm"
+                   placeholder="administrator@vsphere.local">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Password</label>
+            <div class="input-group input-group-sm">
+              <input id="inst-pass" type="password" class="form-control form-control-sm"
+                     placeholder="Leave blank to keep existing">
+              <button class="btn btn-outline-secondary" type="button"
+                      onclick="togPwd('inst-pass',this)"><i class="bi bi-eye"></i></button>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Domain <small class="text-muted">(Hyper-V only)</small></label>
+            <input id="inst-domain" type="text" class="form-control form-control-sm" placeholder="CORP">
+          </div>
+          <div class="col-md-3">
+            <label class="adm-lbl">Verify SSL</label>
+            <select id="inst-verify" class="form-select form-select-sm">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="adm-lbl">Enabled</label>
+            <select id="inst-enabled" class="form-select form-select-sm">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="adm-lbl">Notes</label>
+            <input id="inst-notes" type="text" class="form-control form-control-sm"
+                   placeholder="Optional — purpose, owner, ticket reference">
+          </div>
+        </div>
+        <div id="inst-modal-alert" class="mt-3" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="inst-save-btn" onclick="saveInstance()">
+            <i class="bi bi-check-lg me-1"></i>Save
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Type create/edit -->
+<div class="modal fade" id="typeModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(90deg,#111827,#1f2937);">
+        <h6 class="modal-title text-white" id="type-modal-title">Add Hypervisor Type</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="type-id">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="adm-lbl">Type Key * <small class="text-muted">(lowercase, no spaces)</small></label>
+            <input id="type-key" type="text" class="form-control form-control-sm" placeholder="proxmox">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Display Name *</label>
+            <input id="type-name" type="text" class="form-control form-control-sm" placeholder="Proxmox VE">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Adapter Module</label>
+            <input id="type-module" type="text" class="form-control form-control-sm"
+                   placeholder="adapters.proxmox.adapter">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Adapter Class</label>
+            <input id="type-class" type="text" class="form-control form-control-sm"
+                   placeholder="ProxmoxAdapter">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Adapter Version</label>
+            <input id="type-version" type="text" class="form-control form-control-sm" placeholder="1.0.0">
+          </div>
+          <div class="col-md-6">
+            <label class="adm-lbl">Icon (bootstrap-icons)</label>
+            <input id="type-icon" type="text" class="form-control form-control-sm" placeholder="bi-box">
+          </div>
+          <div class="col-12">
+            <label class="adm-lbl">Capabilities (JSON)</label>
+            <textarea id="type-caps" class="form-control form-control-sm" rows="3"
+                placeholder='{"clusters":true,"hosts":true,"datastores":true,"vms":true}'></textarea>
+          </div>
+          <div class="col-12">
+            <label class="adm-lbl">Enabled</label>
+            <select id="type-enabled" class="form-select form-select-sm">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </div>
+        </div>
+        <div id="type-modal-alert" class="mt-3" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary btn-sm" id="type-save-btn" onclick="saveType()">
+            <i class="bi bi-check-lg me-1"></i>Save
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.adm-lbl {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: #374151; margin-bottom: 4px; display: block;
+}
+.filter-bar {
+    background: var(--bg-card, #fff);
+    border: 1px solid var(--border-color, #dee2e6);
+    border-radius: 10px;
+    padding: 12px 16px;
+}
+.role-pill { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
+             display: inline-flex; align-items: center; gap: 4px; }
+.rp-super { background:#fee2e2; color:#991b1b; }
+.rp-user  { background:#dbeafe; color:#1e40af; }
+.you-tag  { font-size: 9px; background:#f3f4f6; color:#6b7280; border-radius: 20px;
+            padding: 1px 6px; margin-left:4px; font-weight:600; }
+.act-btn { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 5px;
+           border: none; cursor: pointer; display: inline-flex; align-items: center;
+           gap: 3px; transition: opacity .15s; }
+.act-btn:hover:not(:disabled) { opacity: .8; }
+.act-btn-pw  { background:#e0f2fe; color:#0369a1; }
+.act-btn-del { background:#fee2e2; color:#b91c1c; }
+.act-btn-del:disabled { opacity:.4; cursor:not-allowed; }
+.act-btn-edit { background:#fef3c7; color:#854d0e; }
+.act-btn-test { background:#d1fae5; color:#065f46; }
+.act-btn-toggle { background:#e0e7ff; color:#3730a3; }
+.status-pill { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 12px; }
+.sp-ok   { background:#d1fae5; color:#065f46; }
+.sp-fail { background:#fee2e2; color:#991b1b; }
+.sp-off  { background:#f3f4f6; color:#4b5563; }
+.sp-ret  { background:#fef3c7; color:#854d0e; }
+</style>
+
+<script>
+'use strict';
+const ME = {{ session.user_id | tojson }};
+let _instances = [];
+let _types = [];
+
+function x(s) {
+    return (s??'').toString()
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function togPwd(id, btn) {
+    const el = document.getElementById(id);
+    el.type = el.type === 'password' ? 'text' : 'password';
+    btn.innerHTML = el.type === 'password' ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>';
+}
+function showAlert(elId, type, msg) {
+    const el = document.getElementById(elId);
+    el.style.display = 'block';
+    el.className = `alert alert-${type} py-2 small mb-0`;
+    el.innerHTML = msg;
+}
+
+// ── Tabs ──────────────────────────────────────────────────────
+document.querySelectorAll('#adminTabs .nav-link').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('#adminTabs .nav-link').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        document.querySelectorAll('.tab-pane').forEach(p => p.style.display = 'none');
+        document.getElementById('tab-' + btn.dataset.tab).style.display = 'block';
+        if (btn.dataset.tab === 'instances') loadInstances();
+        if (btn.dataset.tab === 'types')     loadTypes();
+    });
+});
+
+// ══════════════════════════════════════════════════════════════
+//  USERS
+// ══════════════════════════════════════════════════════════════
+async function loadUsers() {
+    try {
+        const r = await fetch('/api/list_users');
+        renderUsers(await r.json());
+    } catch(e) {
+        document.getElementById('users-loading').innerHTML =
+            `<div class="text-danger small p-4">Failed: ${x(e.message)}</div>`;
+    }
+}
+function renderUsers(users) {
+    document.getElementById('users-loading').style.display = 'none';
+    document.getElementById('user-count').textContent =
+        `${users.length} user${users.length !== 1 ? 's' : ''}`;
+    if (!users.length) return;
+    document.getElementById('users-wrap').style.display = 'block';
+    const tb = document.getElementById('users-tbody');
+    tb.innerHTML = users.map((u, i) => {
+        const isMe = u.id === ME;
+        const rCls = u.role === 'superadmin' ? 'rp-super' : 'rp-user';
+        const rIcon = u.role === 'superadmin' ? '🛡' : '👤';
+        const date = u.created_at ? new Date(u.created_at).toLocaleDateString('en-GB', {day:'2-digit', month:'short', year:'numeric'}) : '—';
+        return `<tr>
+            <td class="text-muted">${i+1}</td>
+            <td><span class="fw-semibold">${x(u.username)}</span>${isMe ? '<span class="you-tag">you</span>' : ''}</td>
+            <td><span class="role-pill ${rCls}">${rIcon} ${x(u.role)}</span></td>
+            <td class="text-muted small">${date}</td>
+            <td class="text-end">
+                <button class="act-btn act-btn-pw me-1" onclick="changePwd(${u.id})"><i class="bi bi-key"></i>Password</button>
+                <button class="act-btn act-btn-del" onclick="deleteUser(${u.id},'${x(u.username)}')" ${isMe ? 'disabled' : ''}>
+                    <i class="bi bi-trash"></i>Delete</button>
+            </td></tr>`;
+    }).join('');
+}
+async function createUser() {
+    const username = document.getElementById('new-username').value.trim();
+    const password = document.getElementById('new-password').value;
+    const role = document.getElementById('new-role').value;
+    if (!username) return showAlert('create-alert', 'danger', 'Username required');
+    if (password.length < 6) return showAlert('create-alert', 'danger', 'Password min 6 chars');
+    const r = await fetch('/api/create_user', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({username, password, role})
+    });
+    const d = await r.json();
+    if (d.status === 'user created') {
+        showAlert('create-alert', 'success', 'User created');
+        document.getElementById('new-username').value = '';
+        document.getElementById('new-password').value = '';
+        loadUsers();
+    } else showAlert('create-alert', 'danger', d.message || 'Failed');
+}
+async function deleteUser(id, name) {
+    if (!confirm(`Delete user "${name}"?`)) return;
+    await fetch(`/api/delete_user/${id}`, {method: 'DELETE'});
+    loadUsers();
+}
+async function changePwd(id) {
+    const np = prompt('New password (min 6 chars):');
+    if (!np || np.length < 6) return;
+    await fetch('/api/change_password', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({user_id: id, password: np})
+    });
+    alert('Password updated');
+}
+
+// ══════════════════════════════════════════════════════════════
+//  INSTANCES  — with client-side filtering
+// ══════════════════════════════════════════════════════════════
+
+// Populate the type + site filter dropdowns from the loaded instance list.
+// Called after every successful loadInstances() so the options stay in sync.
+function populateInstFilters() {
+    // Types
+    const typeSel = document.getElementById('inst-filter-type');
+    const current = typeSel.value;
+    const typeOptions = [...new Set(_instances.map(i => i.type_key))].sort();
+    typeSel.innerHTML = '<option value="">All types</option>' +
+        typeOptions.map(t => `<option value="${x(t)}">${x(t)}</option>`).join('');
+    if (typeOptions.includes(current)) typeSel.value = current;
+
+    // Sites
+    const siteSel = document.getElementById('inst-filter-site');
+    const currentSite = siteSel.value;
+    const siteOptions = [...new Set(_instances.map(i => i.site_code).filter(Boolean))].sort();
+    siteSel.innerHTML = '<option value="">All sites</option>' +
+        siteOptions.map(s => `<option value="${x(s)}">${x(s)}</option>`).join('');
+    // Preserve "unassigned" as a special case
+    siteSel.innerHTML += '<option value="__none__">(no site)</option>';
+    if (siteOptions.includes(currentSite) || currentSite === '__none__') siteSel.value = currentSite;
+}
+
+// Derive a status string from an instance row — matches the badge logic
+// in renderInstances() so filters and pills never disagree.
+function instanceStatus(inst) {
+    if (inst.deleted_at) return 'retired';
+    if (!inst.enabled) return 'disabled';
+    if (inst.last_sync_status === 'success') return 'active';
+    if (inst.last_sync_status === 'failed') return 'failed';
+    return 'never';
+}
+
+// Return _instances filtered by the current filter bar state.
+function filteredInstances() {
+    const q      = (document.getElementById('inst-search').value || '').toLowerCase().trim();
+    const typeF  = document.getElementById('inst-filter-type').value;
+    const siteF  = document.getElementById('inst-filter-site').value;
+    const statF  = document.getElementById('inst-filter-status').value;
+
+    return _instances.filter(inst => {
+        if (typeF && inst.type_key !== typeF) return false;
+        if (siteF === '__none__') { if (inst.site_code) return false; }
+        else if (siteF && inst.site_code !== siteF) return false;
+        if (statF && instanceStatus(inst) !== statF) return false;
+
+        if (q) {
+            const opts = inst.connection_options || {};
+            const haystack = [
+                inst.name, inst.host, inst.site_code, inst.notes,
+                inst.type_key, inst.type_name,
+                opts.username, opts.ip_address, opts.domain
+            ].filter(Boolean).join(' ').toLowerCase();
+            if (!haystack.includes(q)) return false;
+        }
+        return true;
+    });
+}
+
+window.clearInstFilters = function() {
+    document.getElementById('inst-search').value = '';
+    document.getElementById('inst-filter-type').value = '';
+    document.getElementById('inst-filter-site').value = '';
+    document.getElementById('inst-filter-status').value = '';
+    renderInstances();
+};
+
+async function loadInstances() {
+    document.getElementById('inst-loading').style.display = 'block';
+    document.getElementById('inst-wrap').style.display = 'none';
+    document.getElementById('inst-empty').style.display = 'none';
+    const r = await fetch('/api/admin/instances');
+    _instances = await r.json();
+    document.getElementById('inst-count').textContent = _instances.length;
+    populateInstFilters();
+    renderInstances();
+}
+
+function renderInstances() {
+    document.getElementById('inst-loading').style.display = 'none';
+
+    const rows = filteredInstances();
+
+    // Update the "showing X of Y" info line
+    const info = document.getElementById('inst-filter-info');
+    const activeFilters = [
+        document.getElementById('inst-search').value && 'search',
+        document.getElementById('inst-filter-type').value && 'type',
+        document.getElementById('inst-filter-site').value && 'site',
+        document.getElementById('inst-filter-status').value && 'status',
+    ].filter(Boolean).length;
+
+    if (activeFilters > 0) {
+        info.textContent = `Showing ${rows.length} of ${_instances.length} instances (${activeFilters} filter${activeFilters > 1 ? 's' : ''} active)`;
+    } else {
+        info.textContent = `Showing all ${_instances.length} instances`;
+    }
+
+    if (!rows.length) {
+        document.getElementById('inst-wrap').style.display = 'none';
+        document.getElementById('inst-empty').style.display = 'block';
+        return;
+    }
+
+    document.getElementById('inst-wrap').style.display = 'block';
+    document.getElementById('inst-empty').style.display = 'none';
+
+    const tb = document.getElementById('inst-tbody');
+    tb.innerHTML = rows.map(inst => {
+        const opts = inst.connection_options || {};
+        const user = opts.username || '—';
+        const lastSync = inst.last_sync_at
+            ? new Date(inst.last_sync_at).toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})
+            : '—';
+        let statusHtml;
+        const st = instanceStatus(inst);
+        if (st === 'retired')      statusHtml = '<span class="status-pill sp-ret">Retired</span>';
+        else if (st === 'disabled')statusHtml = '<span class="status-pill sp-off">Disabled</span>';
+        else if (st === 'active')  statusHtml = '<span class="status-pill sp-ok">Active</span>';
+        else if (st === 'failed')  statusHtml = '<span class="status-pill sp-fail">Failed</span>';
+        else                       statusHtml = '<span class="status-pill sp-off">Never run</span>';
+
+        return `<tr>
+            <td><span class="badge bg-secondary">${x(inst.type_key)}</span></td>
+            <td><b>${x(inst.name)}</b>${inst.notes ? `<br><small class="text-muted">${x(inst.notes)}</small>` : ''}</td>
+            <td>${inst.site_code ? `<span class="badge bg-info text-dark">${x(inst.site_code)}</span>` : '<span class="text-muted">—</span>'}</td>
+            <td>${x(inst.host)}${inst.port ? ':' + inst.port : ''}</td>
+            <td class="text-muted small">${x(user)}</td>
+            <td class="text-muted small">${lastSync}</td>
+            <td>${statusHtml}</td>
+            <td class="text-end">
+                <button class="act-btn act-btn-test me-1" onclick="testInstance(${inst.id}, '${x(inst.name)}')" ${inst.deleted_at ? 'disabled' : ''}>
+                    <i class="bi bi-plug"></i>Test</button>
+                <button class="act-btn act-btn-edit me-1" onclick="openInstanceModal(${inst.id})">
+                    <i class="bi bi-pencil"></i>Edit</button>
+                <button class="act-btn act-btn-toggle me-1" onclick="toggleInstance(${inst.id})" ${inst.deleted_at ? 'disabled' : ''}>
+                    <i class="bi bi-${inst.enabled ? 'eye-slash' : 'eye'}"></i>${inst.enabled ? 'Hide' : 'Show'}</button>
+                ${inst.deleted_at
+                    ? `<button class="act-btn act-btn-test" onclick="restoreInstance(${inst.id})"><i class="bi bi-arrow-counterclockwise"></i>Restore</button>`
+                    : `<button class="act-btn act-btn-del" onclick="retireInstance(${inst.id}, '${x(inst.name)}')"><i class="bi bi-archive"></i>Retire</button>`}
+            </td></tr>`;
+    }).join('');
+}
+
+async function openInstanceModal(id) {
+    const modal = new bootstrap.Modal(document.getElementById('instanceModal'));
+    document.getElementById('inst-modal-alert').style.display = 'none';
+    document.getElementById('inst-id').value = id || '';
+
+    if (!_types.length) {
+        const r = await fetch('/api/admin/hypervisor_types');
+        _types = await r.json();
+    }
+    document.getElementById('inst-type').innerHTML = _types
+        .filter(t => t.enabled || (id && t.id === currentInstTypeId(id)))
+        .map(t => `<option value="${t.id}">${x(t.display_name)} (${x(t.type_key)})</option>`).join('');
+
+    if (id) {
+        const inst = _instances.find(i => i.id === id);
+        if (!inst) return;
+        document.getElementById('inst-modal-title').textContent = 'Edit Instance';
+        document.getElementById('inst-type').value   = inst.hypervisor_type_id;
+        document.getElementById('inst-name').value   = inst.name;
+        document.getElementById('inst-host').value   = inst.host || '';
+        document.getElementById('inst-port').value   = inst.port || '';
+        document.getElementById('inst-site').value   = inst.site_code || '';
+        document.getElementById('inst-user').value   = (inst.connection_options || {}).username || '';
+        document.getElementById('inst-pass').value   = '';
+        document.getElementById('inst-pass').placeholder = (inst.connection_options || {}).password === '__SET__' ? 'Leave blank to keep current' : 'Enter password';
+        document.getElementById('inst-domain').value = (inst.connection_options || {}).domain || '';
+        document.getElementById('inst-verify').value = inst.verify_ssl ? '1' : '0';
+        document.getElementById('inst-enabled').value = inst.enabled ? '1' : '0';
+        document.getElementById('inst-notes').value  = inst.notes || '';
+    } else {
+        document.getElementById('inst-modal-title').textContent = 'Add Instance';
+        ['inst-type','inst-name','inst-host','inst-port','inst-site','inst-user','inst-pass','inst-domain','inst-notes']
+            .forEach(f => document.getElementById(f).value = '');
+        document.getElementById('inst-pass').placeholder = 'Enter password';
+        document.getElementById('inst-verify').value = '1';
+        document.getElementById('inst-enabled').value = '1';
+    }
+    modal.show();
+}
+
+function currentInstTypeId(id) {
+    const inst = _instances.find(i => i.id === id);
+    return inst ? inst.hypervisor_type_id : null;
+}
+
+async function saveInstance() {
+    const id = document.getElementById('inst-id').value;
+    const payload = {
+        hypervisor_type_id: parseInt(document.getElementById('inst-type').value),
+        name:     document.getElementById('inst-name').value.trim(),
+        host:     document.getElementById('inst-host').value.trim(),
+        port:     document.getElementById('inst-port').value || null,
+        site_code: document.getElementById('inst-site').value.trim() || null,
+        username: document.getElementById('inst-user').value.trim() || null,
+        password: document.getElementById('inst-pass').value || null,
+        domain:   document.getElementById('inst-domain').value.trim() || null,
+        verify_ssl: document.getElementById('inst-verify').value === '1',
+        enabled:    document.getElementById('inst-enabled').value === '1',
+        notes:      document.getElementById('inst-notes').value.trim() || null,
+    };
+    if (!payload.name || !payload.host || !payload.hypervisor_type_id) {
+        return showAlert('inst-modal-alert', 'danger', 'Name, Host and Type are required');
+    }
+    const btn = document.getElementById('inst-save-btn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    const url = id ? `/api/admin/instances/${id}` : '/api/admin/instances';
+    const method = id ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+        method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save';
+
+    if (d.error) { showAlert('inst-modal-alert', 'danger', x(d.error)); return; }
+    bootstrap.Modal.getInstance(document.getElementById('instanceModal')).hide();
+    loadInstances();
+}
+
+async function toggleInstance(id) {
+    await fetch(`/api/admin/instances/${id}/toggle`, {method: 'POST'});
+    loadInstances();
+}
+async function retireInstance(id, name) {
+    if (!confirm(`Retire "${name}"? It will be hidden from every page. Historical data is kept.\n\nYou can restore it later from this same page.`)) return;
+    await fetch(`/api/admin/instances/${id}`, {method: 'DELETE'});
+    loadInstances();
+}
+async function restoreInstance(id) {
+    await fetch(`/api/admin/instances/${id}/restore`, {method: 'POST'});
+    loadInstances();
+}
+async function testInstance(id, name) {
+    const r = await fetch(`/api/admin/instances/${id}/test`, {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) {
+        alert(`✓ ${name} connected\nClusters: ${d.counts.clusters}\nHosts: ${d.counts.hosts}`);
+    } else {
+        alert(`✕ ${name} failed\n\n${d.error}`);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  TYPES  — with client-side filtering
+// ══════════════════════════════════════════════════════════════
+
+function filteredTypes() {
+    const q       = (document.getElementById('type-search').value || '').toLowerCase().trim();
+    const statF   = document.getElementById('type-filter-status').value;
+    const hasInst = document.getElementById('type-filter-has-inst').value;
+
+    return _types.filter(t => {
+        if (statF === 'enabled'  && !t.enabled) return false;
+        if (statF === 'disabled' && t.enabled)  return false;
+        if (hasInst === 'yes' && (!t.instance_count || t.instance_count === 0)) return false;
+        if (hasInst === 'no'  && t.instance_count > 0) return false;
+
+        if (q) {
+            const haystack = [
+                t.type_key, t.display_name,
+                t.adapter_module, t.adapter_class
+            ].filter(Boolean).join(' ').toLowerCase();
+            if (!haystack.includes(q)) return false;
+        }
+        return true;
+    });
+}
+
+window.clearTypeFilters = function() {
+    document.getElementById('type-search').value = '';
+    document.getElementById('type-filter-status').value = '';
+    document.getElementById('type-filter-has-inst').value = '';
+    renderTypes();
+};
+
+async function loadTypes() {
+    document.getElementById('type-loading').style.display = 'block';
+    document.getElementById('type-wrap').style.display = 'none';
+    document.getElementById('type-empty').style.display = 'none';
+    const r = await fetch('/api/admin/hypervisor_types');
+    _types = await r.json();
+    document.getElementById('type-count').textContent = _types.length;
+    renderTypes();
+}
+
+function renderTypes() {
+    document.getElementById('type-loading').style.display = 'none';
+
+    const rows = filteredTypes();
+
+    const info = document.getElementById('type-filter-info');
+    const activeFilters = [
+        document.getElementById('type-search').value && 'search',
+        document.getElementById('type-filter-status').value && 'status',
+        document.getElementById('type-filter-has-inst').value && 'has-instances',
+    ].filter(Boolean).length;
+
+    if (activeFilters > 0) {
+        info.textContent = `Showing ${rows.length} of ${_types.length} types (${activeFilters} filter${activeFilters > 1 ? 's' : ''} active)`;
+    } else {
+        info.textContent = `Showing all ${_types.length} types`;
+    }
+
+    if (!rows.length) {
+        document.getElementById('type-wrap').style.display = 'none';
+        document.getElementById('type-empty').style.display = 'block';
+        return;
+    }
+    document.getElementById('type-wrap').style.display = 'block';
+    document.getElementById('type-empty').style.display = 'none';
+
+    document.getElementById('type-tbody').innerHTML = rows.map(t => `
+        <tr>
+            <td><code>${x(t.type_key)}</code></td>
+            <td><b>${x(t.display_name)}</b></td>
+            <td class="text-muted small">${x(t.adapter_module || '—')}<br>${x(t.adapter_class || '')}</td>
+            <td>${t.instance_count}</td>
+            <td>${t.enabled ? '<span class="status-pill sp-ok">Enabled</span>' : '<span class="status-pill sp-off">Disabled</span>'}</td>
+            <td class="text-end">
+                <button class="act-btn act-btn-edit me-1" onclick="openTypeModal(${t.id})">
+                    <i class="bi bi-pencil"></i>Edit</button>
+                ${t.enabled
+                    ? `<button class="act-btn act-btn-del" onclick="disableType(${t.id},'${x(t.display_name)}')"><i class="bi bi-eye-slash"></i>Disable</button>`
+                    : `<button class="act-btn act-btn-test" onclick="enableType(${t.id})"><i class="bi bi-eye"></i>Enable</button>`}
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function openTypeModal(id) {
+    const modal = new bootstrap.Modal(document.getElementById('typeModal'));
+    document.getElementById('type-modal-alert').style.display = 'none';
+    document.getElementById('type-id').value = id || '';
+    if (id) {
+        const t = _types.find(x => x.id === id);
+        if (!t) return;
+        document.getElementById('type-modal-title').textContent = 'Edit Type';
+        document.getElementById('type-key').value     = t.type_key;
+        document.getElementById('type-key').disabled  = true;
+        document.getElementById('type-name').value    = t.display_name;
+        document.getElementById('type-module').value  = t.adapter_module || '';
+        document.getElementById('type-class').value   = t.adapter_class || '';
+        document.getElementById('type-version').value = t.adapter_version || '';
+        document.getElementById('type-icon').value    = t.icon || '';
+        document.getElementById('type-caps').value    = t.capabilities || '{}';
+        document.getElementById('type-enabled').value = t.enabled ? '1' : '0';
+    } else {
+        document.getElementById('type-modal-title').textContent = 'Add Hypervisor Type';
+        ['type-key','type-name','type-module','type-class','type-version','type-icon'].forEach(f => document.getElementById(f).value = '');
+        document.getElementById('type-key').disabled = false;
+        document.getElementById('type-caps').value = '{"clusters":true,"hosts":true,"datastores":true,"vms":true}';
+        document.getElementById('type-enabled').value = '1';
+    }
+    modal.show();
+}
+
+async function saveType() {
+    const id = document.getElementById('type-id').value;
+    const payload = {
+        type_key: document.getElementById('type-key').value.trim(),
+        display_name: document.getElementById('type-name').value.trim(),
+        adapter_module: document.getElementById('type-module').value.trim() || null,
+        adapter_class: document.getElementById('type-class').value.trim() || null,
+        adapter_version: document.getElementById('type-version').value.trim() || null,
+        icon: document.getElementById('type-icon').value.trim() || null,
+        capabilities: document.getElementById('type-caps').value.trim() || '{}',
+        enabled: document.getElementById('type-enabled').value === '1',
+    };
+    if (!payload.type_key || !payload.display_name) {
+        return showAlert('type-modal-alert', 'danger', 'Type key and Display name are required');
+    }
+    const url = id ? `/api/admin/hypervisor_types/${id}` : '/api/admin/hypervisor_types';
+    const method = id ? 'PUT' : 'POST';
+    const r = await fetch(url, {
+        method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if (d.error) { showAlert('type-modal-alert', 'danger', x(d.error)); return; }
+    bootstrap.Modal.getInstance(document.getElementById('typeModal')).hide();
+    loadTypes();
+}
+
+async function disableType(id, name) {
+    if (!confirm(`Disable type "${name}"? All its instances must already be disabled or retired.`)) return;
+    const r = await fetch(`/api/admin/hypervisor_types/${id}`, {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) { alert(d.error); return; }
+    loadTypes();
+}
+async function enableType(id) {
+    await fetch(`/api/admin/hypervisor_types/${id}`, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({enabled: true})
+    });
+    loadTypes();
+}
+
+// Keyboard shortcut: press "/" to focus the current tab's search box
+document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)) {
+        e.preventDefault();
+        if (document.getElementById('tab-instances').style.display !== 'none') {
+            document.getElementById('inst-search').focus();
+        } else if (document.getElementById('tab-types').style.display !== 'none') {
+            document.getElementById('type-search').focus();
+        }
+    }
+});
+
+// ── Init ──────────────────────────────────────────────────────
+loadUsers();
+</script>
+
+{% endblock %}

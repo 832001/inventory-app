@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- ══════════════════════════════════════════
+     PAGE HEADER
+══════════════════════════════════════════ -->
+<div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+        <h4 class="mb-0 fw-bold">
+            <i class="bi bi-clock-history me-2 text-warning"></i>VM Lifecycle
+        </h4>
+        <small class="text-muted">VMs flagged as missing from the latest collection run — confirm decommission or restore</small>
+    </div>
+    <div>
+        <div class="dropdown d-inline-block me-2">
+            <button class="btn btn-sm btn-success dropdown-toggle" type="button"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-download me-1"></i>Export
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="#" onclick="exportLifecycle('csv'); return false;">
+                    <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                <li><a class="dropdown-item" href="#" onclick="exportLifecycle('xlsx'); return false;">
+                    <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+            </ul>
+        </div>
+        {% if session.role == 'superadmin' %}
+        <button class="btn btn-sm btn-outline-secondary" id="btn-rescan">
+            <i class="bi bi-arrow-clockwise me-1"></i>Rescan now
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════
+     FILTER TABS
+══════════════════════════════════════════ -->
+<ul class="nav nav-pills mb-3" id="lifecycle-tabs">
+    <li class="nav-item">
+        <button class="nav-link active" data-status="pending_decommission,restored">
+            Needs review <span class="badge bg-light text-dark ms-1" id="count-needs-review">0</span>
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-status="pending_decommission">Pending decommission</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-status="restored">Restored / reappeared</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link" data-status="decommissioned">Decommissioned (history)</button>
+    </li>
+</ul>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <div id="lc-loading" class="text-center text-muted py-5">
+            <i class="bi bi-hourglass-split fs-3"></i>
+            <div class="mt-2">Loading…</div>
+        </div>
+        <div id="lc-empty" class="text-center text-muted py-5 d-none">
+            <i class="bi bi-check-circle fs-2 text-success"></i>
+            <div class="mt-2">Nothing here — inventory is clean.</div>
+        </div>
+        <div class="table-responsive d-none" id="lc-table-wrap">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>VM Name</th>
+                        <th>Platform</th>
+                        <th>Cluster / vCenter</th>
+                        <th>Status</th>
+                        <th>Last seen</th>
+                        <th>Missing since run</th>
+                        <th>Last known specs</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="lc-rows"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Confirm / notes modal -->
+<div class="modal fade" id="lc-modal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title" id="lc-modal-title">Confirm</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2" id="lc-modal-text"></p>
+        <textarea class="form-control" id="lc-modal-notes" rows="3" placeholder="Optional note (e.g. ticket number, reason)"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm" id="lc-modal-confirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+    const IS_SUPERADMIN = {{ 'true' if session.role == 'superadmin' else 'false' }};
+    let currentStatus = "pending_decommission,restored";
+
+    window.exportLifecycle = function(fmt) {
+        // Export whatever status filter is currently selected in the tabs.
+        window.location.href = `/api/lifecycle/export?status=${encodeURIComponent(currentStatus)}&format=${fmt}`;
+    };
+    let pendingAction = null; // {id, action}
+
+    const statusBadge = (s) => ({
+        active: '<span class="badge bg-success">Active</span>',
+        pending_decommission: '<span class="badge bg-warning text-dark">Pending decommission</span>',
+        decommissioned: '<span class="badge bg-secondary">Decommissioned</span>',
+        restored: '<span class="badge bg-info text-dark">Restored</span>',
+    }[s] || s);
+
+    function fmt(dt) { return dt ? new Date(dt).toLocaleString() : '—'; }
+
+    async function loadRows() {
+        document.getElementById('lc-loading').classList.remove('d-none');
+        document.getElementById('lc-empty').classList.add('d-none');
+        document.getElementById('lc-table-wrap').classList.add('d-none');
+        const res = await fetch(`/api/lifecycle?status=${encodeURIComponent(currentStatus)}`);
+        const rows = await res.json();
+        document.getElementById('lc-loading').classList.add('d-none');
+        if (!rows.length) {
+            document.getElementById('lc-empty').classList.remove('d-none');
+            return;
+        }
+        document.getElementById('lc-table-wrap').classList.remove('d-none');
+        const tbody = document.getElementById('lc-rows');
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td class="fw-semibold">${r.vm_name}</td>
+                <td class="text-capitalize">${r.platform}</td>
+                <td>${r.context_name || '—'}</td>
+                <td>${statusBadge(r.status)}</td>
+                <td>${fmt(r.last_seen_at)}</td>
+                <td>${r.missing_since_run_id || '—'} ${r.missing_run_count ? `<span class="text-muted small">(${r.missing_run_count} runs)</span>` : ''}</td>
+                <td class="small text-muted">
+                    ${r.last_known_cpu ? `${r.last_known_cpu} vCPU` : ''}
+                    ${r.last_known_ram_mb ? ` / ${(r.last_known_ram_mb/1024).toFixed(1)} GB` : ''}
+                    ${r.last_known_ip ? `<br>${r.last_known_ip}` : ''}
+                </td>
+                <td class="text-end">
+                    ${(r.status === 'pending_decommission' || r.status === 'restored') && IS_SUPERADMIN ? `
+                        <button class="btn btn-sm btn-outline-danger" onclick="lcAsk(${r.id},'confirm','${r.vm_name.replace(/'/g,"\\'")}')">
+                            <i class="bi bi-x-circle"></i> Confirm gone
+                        </button>
+                        <button class="btn btn-sm btn-outline-success ms-1" onclick="lcAsk(${r.id},'restore','${r.vm_name.replace(/'/g,"\\'")}')">
+                            <i class="bi bi-arrow-counterclockwise"></i> Mark active
+                        </button>` : ''}
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    async function loadSummary() {
+        const res = await fetch('/api/lifecycle/summary');
+        const s = await res.json();
+        document.getElementById('count-needs-review').textContent =
+            (s.pending_decommission || 0) + (s.restored || 0);
+    }
+
+    window.lcAsk = function(id, action, vmName) {
+        pendingAction = { id, action };
+        document.getElementById('lc-modal-title').textContent =
+            action === 'confirm' ? 'Confirm decommission' : 'Mark VM active again';
+        document.getElementById('lc-modal-text').textContent =
+            action === 'confirm'
+                ? `Confirm that "${vmName}" has been permanently removed?`
+                : `Mark "${vmName}" as active again (false-positive detection)?`;
+        const btn = document.getElementById('lc-modal-confirm');
+        btn.className = 'btn btn-sm ' + (action === 'confirm' ? 'btn-danger' : 'btn-success');
+        new bootstrap.Modal(document.getElementById('lc-modal')).show();
+    };
+
+    document.getElementById('lc-modal-confirm').addEventListener('click', async () => {
+        if (!pendingAction) return;
+        const notes = document.getElementById('lc-modal-notes').value;
+        const url = `/api/lifecycle/${pendingAction.id}/${pendingAction.action}`;
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes }),
+        });
+        bootstrap.Modal.getInstance(document.getElementById('lc-modal')).hide();
+        document.getElementById('lc-modal-notes').value = '';
+        pendingAction = null;
+        loadRows();
+        loadSummary();
+    });
+
+    document.getElementById('btn-rescan')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Scanning…';
+        try {
+            await fetch('/api/lifecycle/scan', { method: 'POST' });
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Rescan now';
+            loadRows();
+            loadSummary();
+        }
+    });
+
+    document.querySelectorAll('#lifecycle-tabs .nav-link').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#lifecycle-tabs .nav-link').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentStatus = btn.dataset.status;
+            loadRows();
+        });
+    });
+
+    loadRows();
+    loadSummary();
+})();
+</script>
+{% endblock %}

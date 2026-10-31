@@ -1,0 +1,644 @@
+// ═══════════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Export any HTML table to CSV and trigger a download on the user's device.
+ * Strips HTML tags from cells so progress bars / links don't corrupt the file.
+ * @param {string} tableId   - id of the <table> or <tbody> element
+ * @param {string} filename  - desired filename (e.g. "hosts.csv")
+ */
+function exportTableToCSV(tableId, filename) {
+    const table = document.getElementById(tableId);
+    if (!table) { alert("Table not found"); return; }
+
+    const rows  = table.closest("table")
+                       ? table.closest("table").querySelectorAll("tr")
+                       : table.querySelectorAll("tr");
+
+    const csvLines = [];
+    rows.forEach(row => {
+        const cells = row.querySelectorAll("th, td");
+        const line  = Array.from(cells).map(cell => {
+            // Strip HTML, trim, wrap in quotes if contains comma/quote/newline
+            let text = cell.innerText.replace(/\n/g, " ").trim();
+            if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+                text = '"' + text.replace(/"/g, '""') + '"';
+            }
+            return text;
+        }).join(",");
+        csvLines.push(line);
+    });
+
+    const blob = new Blob(["\uFEFF" + csvLines.join("\n")], // BOM for Excel UTF-8
+                          { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+/**
+ * Live search/filter on a tbody — hides rows that don't match.
+ * @param {string} inputId  - id of the search <input>
+ * @param {string} tbodyId  - id of the <tbody> to filter
+ */
+function liveSearch(inputId, tbodyId) {
+    const input = document.getElementById(inputId);
+    const tbody = document.getElementById(tbodyId);
+    if (!input || !tbody) return;
+
+    input.addEventListener("input", () => {
+        const q = input.value.toLowerCase().trim();
+        tbody.querySelectorAll("tr").forEach(row => {
+            row.style.display = row.innerText.toLowerCase().includes(q) ? "" : "none";
+        });
+    });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  NAVIGATION
+// ═══════════════════════════════════════════════════════════
+function goToPage(page) {
+
+    if (page === "create_vm") {
+        let params   = new URLSearchParams();
+        let selected = document.querySelectorAll(".vc-check:checked");
+        if (selected.length > 0) params.set("vcenter", selected[0].value);
+        let run_id = document.getElementById("runFilter")?.value;
+        if (run_id) params.set("run_id", run_id);
+        window.location.href = `/create_vm?${params.toString()}`;
+        return;
+    }
+
+    let selected = document.querySelectorAll(".vc-check:checked");
+    if (selected.length === 0) { alert("Select at least one vCenter"); return; }
+
+    let vcenters = [];
+    selected.forEach(cb => vcenters.push(cb.value));
+
+    let run_id = document.getElementById("runFilter")?.value;
+    let params = new URLSearchParams();
+    params.append("vcenter", vcenters.join(","));
+    if (run_id) params.append("run_id", run_id);
+
+    window.location.href = `/${page}?${params.toString()}`;
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  DASHBOARD
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/") {
+    loadDashboard();
+}
+
+function loadDashboard() {
+    let run_id = document.getElementById("runFilter")?.value;
+    let url    = "/api/dashboard";
+    if (run_id) url += "?run_id=" + run_id;
+
+    fetch(url)
+        .then(res => res.json())
+        .then(data => {
+            const table     = document.getElementById("inventoryTable");
+            const runSelect = document.getElementById("runFilter");
+            table.innerHTML = "";
+
+            if (runSelect) {
+                runSelect.innerHTML = "";
+                data.runs.forEach(run => {
+                    runSelect.innerHTML +=
+                        `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp}</option>`;
+                });
+                runSelect.value    = data.run_id;
+                runSelect.onchange = () => loadDashboard();
+            }
+
+            if (!data.data || data.data.length === 0) {
+                table.innerHTML = "<tr><td colspan='20'>No data found</td></tr>";
+                return;
+            }
+
+            function toNum(v)    { return parseFloat(v || 0); }
+            function fmtTB(v)    { return (toNum(v) / 1024).toFixed(1) + " TB"; }
+            function pBar(value) {
+                value = toNum(value);
+                const color = value > 90 ? "red" : value > 70 ? "orange" : "green";
+                return `<div class="progress">
+                    <div class="progress-bar" style="width:${value}%;background:${color}">
+                        ${value.toFixed(1)}%
+                    </div></div>`;
+            }
+
+            data.data.forEach(row => {
+                table.innerHTML += `
+                    <tr>
+                        <td><input type="checkbox" class="vc-check" value="${row.Vcenter}"></td>
+                        <td><b>${row.Vcenter}</b></td>
+                        <td>${row.ip_vcenter}</td>
+                        <td>${row.num_clusters}</td>
+                        <td>${row.num_hosts}</td>
+                        <td>${row.num_datastores}</td>
+                        <td>${row.num_vms}</td>
+                        <td>${row.total_cores}</td>
+                        <td>${pBar(row.cpu_usage_percent)}<h1></h1><small>${row.used_cores} Cores</td>
+                        <td>${row.free_cores}</td>
+			<td>${fmtTB(row.total_memory_gb)} GB</td>
+                        <td>${pBar(row.memory_usage_percent)}<small>Used: ${toNum(row.used_memory_gb).toFixed(1)} GB</small></td>
+                        <td>${toNum(row.free_memory_gb).toFixed(1)} GB</td>
+                        <td>${fmtTB(row.total_storage_gb)}</td>
+                        <td>${pBar(row.storage_usage_percent)}<small>Used: ${fmtTB(row.used_storage_gb)}</small></td>
+                        <td>${fmtTB(row.free_storage_gb)}</td>
+                        <td>${row.Subscription_cpu_ratio}<h1></h1><small> ${row.total_cpu_vms} Cores<br></small></td>
+                        <td>${row.Subscription_memory_ratio}<h1></h1><small>${row.total_memory_vms_gb} GB<br></small></td>
+                        <td>${row.Subscription_storage_ratio}<h1></h1><small>${row.total_disk_size_gb} GB<br></small></td>
+	           </tr>`;
+            });
+        })
+        .catch(err => console.error("Dashboard Error:", err));
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  VCENTERS
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/vcenters") {
+    fetch("/api/vcenters")
+        .then(res => res.json())
+        .then(data => {
+            const table = document.getElementById("vcentersTable");
+            table.innerHTML = "";
+            data.forEach(vc => {
+                table.innerHTML += `
+                    <tr>
+                        <td>${vc.vcenter_name}</td>
+                        <td>${vc.hostname}</td>
+                        <td>${vc.ip_address || "-"}</td>
+                    </tr>`;
+            });
+        });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  HOSTS
+//  Fix: filter by cluster dropdown change re-fetches with
+//       the currently selected run_id, not from URL only
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/hosts") {
+    loadRunFilter(initHosts);
+}
+
+function initHosts() {
+    // Populate cluster filter dropdown from URL param
+    const urlParams  = new URLSearchParams(window.location.search);
+    const clusterSel = document.getElementById("clusterFilter");
+
+    if (clusterSel) {
+        // Fetch unique clusters for this run to populate the filter
+        const run_id  = urlParams.get("run_id") || document.getElementById("runFilter")?.value;
+        const vcenter = urlParams.get("vcenter");
+
+        let apiUrl = `/api/clusters?run_id=${run_id}`;
+        if (vcenter) apiUrl += `&vcenter=${vcenter}`;
+
+        fetch(apiUrl)
+            .then(res => res.json())
+            .then(clusters => {
+                clusterSel.innerHTML = '<option value="">— All Clusters —</option>';
+                clusters.forEach(c => {
+                    const selected = urlParams.get("cluster") === c.cluster_name ? "selected" : "";
+                    clusterSel.innerHTML +=
+                        `<option value="${c.cluster_name}" ${selected}>${c.cluster_name}</option>`;
+                });
+                clusterSel.onchange = () => loadHosts();
+            });
+    }
+
+    loadHosts();
+    liveSearch("hostSearch", "hostsTable");
+}
+
+function loadHosts() {
+    // Always build params fresh from current UI state
+    const urlParams  = new URLSearchParams(window.location.search);
+    const run_id     = document.getElementById("runFilter")?.value
+                       || urlParams.get("run_id");
+    const clusterSel = document.getElementById("clusterFilter");
+    const cluster    = clusterSel?.value || urlParams.get("cluster") || "";
+    const vcenter    = urlParams.get("vcenter") || "";
+
+    const params = new URLSearchParams();
+    if (run_id)  params.set("run_id",  run_id);
+    if (vcenter) params.set("vcenter", vcenter);
+    if (cluster) params.set("cluster", cluster);
+
+    fetch("/api/hosts?" + params.toString())
+        .then(res => res.json())
+        .then(data => {
+            const table = document.getElementById("hostsTable");
+            table.innerHTML = "";
+
+            if (!data.length) {
+                table.innerHTML = "<tr><td colspan='18'>No hosts found</td></tr>";
+                return;
+            }
+
+            data.forEach(host => {
+                const sc = host.connection_state === "connected" ? "green" : "red";
+                table.innerHTML += `
+                    <tr>
+                        <td>${host.host_name}</td>
+                        <td>${host.ip_address || "-"}</td>
+                        <td>${host.vendor || "-"}</td>
+                        <td>${host.vcenter_name}</td>
+                        <td>${host.cluster_name || "-"}</td>
+                        <td>${host.datacenter_name || "-"}</td>
+                        <td>${host.cpu_cores}</td>
+                        <td>${host.cpu_model}</td>
+                        <td>${host.cpu_threads}</td>
+                        <td>${host.cpu_mhz}</td>
+                        <td>${host.memory_total_gb}</td>
+                        <td>${host.memory_used_gb}</td>
+                        <td>${host.esxi_version}</td>
+                        <td>${host.esxi_build}</td>
+                        <td>${host.maintenance_mode}</td>
+                        <td>${host.power_state}</td>
+                        <td style="color:${sc};font-weight:bold;">${host.connection_state}</td>
+                        <td><a href="/vms?host=${host.host_name}&run_id=${host.run_id}">View VMs</a></td>
+                    </tr>`;
+            });
+
+            // Re-apply live search after reload
+            const searchInput = document.getElementById("hostSearch");
+            if (searchInput && searchInput.value) {
+                const q = searchInput.value.toLowerCase();
+                table.querySelectorAll("tr").forEach(row => {
+                    row.style.display = row.innerText.toLowerCase().includes(q) ? "" : "none";
+                });
+            }
+        });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  CLUSTERS
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/clusters") {
+    loadRunFilter(initClusters);
+}
+
+function initClusters() {
+    loadClusters();
+    liveSearch("clusterSearch", "clustersTable");
+}
+
+function loadClusters() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("run_id")) {
+        const rs = document.getElementById("runFilter");
+        if (rs?.value) params.set("run_id", rs.value);
+    }
+
+    fetch("/api/clusters?" + params.toString())
+        .then(res => res.json())
+        .then(data => {
+            const table = document.getElementById("clustersTable");
+            table.innerHTML = "";
+
+            if (!data.length) {
+                table.innerHTML = "<tr><td colspan='24'>No clusters found</td></tr>";
+                return;
+            }
+
+            data.forEach(c => {
+                table.innerHTML += `
+                    <tr>
+                        <td>${c.cluster_name}</td>
+                        <td>${c.vcenter_name}</td>
+                        <td>${c.datacenter_name || "-"}</td>
+                        <td>${c.num_hosts}</td>
+                        <td>${c.num_vms}</td>
+                        <td>${c.num_cpu_cores}</td>
+                        <td>${c.total_cpu_mhz}</td>
+                        <td>${c.num_cpu_threads}</td>
+                        <td>${c.used_cpu_mhz}</td>
+                        <td>${c.free_cpu_mhz}</td>
+                        <td>${c.cpu_usage_percent}</td>
+                        <td>${c.total_memory_mb}</td>
+                        <td>${c.used_memory_mb}</td>
+                        <td>${c.free_memory_mb}</td>
+                        <td>${c.memory_usage_percent}</td>
+                        <td>${c.total_storage_gb}</td>
+                        <td>${c.used_storage_gb}</td>
+                        <td>${c.free_storage_gb}</td>
+                        <td>${c.storage_usage_percent}</td>
+                        <td>${c.ha_enabled  ? "Yes" : "No"}</td>
+                        <td>${c.drs_enabled ? "Yes" : "No"}</td>
+                        <td>${c.vsan_enabled? "Yes" : "No"}</td>
+                        <td><a href="/datastores?cluster=${c.cluster_name}&run_id=${c.run_id}">${c.total_storage_gb} GB</a></td>
+                        <td><a href="/hosts?cluster=${c.cluster_name}&run_id=${c.run_id}">${c.cluster_name}</a></td>
+                    </tr>`;
+            });
+        });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  VMs  —  server-side pagination + search
+//  3000+ rows: only 100 loaded at a time, search hits the DB
+// ═══════════════════════════════════════════════════════════
+let _vmPage     = 1;
+let _vmTotal    = 0;
+let _vmPages    = 1;
+let _vmSearch   = "";
+let _vmSearchTm = null;   // debounce timer
+
+if (window.location.pathname === "/vms") {
+    loadRunFilter(initVMs);
+}
+
+function initVMs() {
+    _vmPage = 1;
+    loadVMs();
+
+    // Debounced server-side search
+    const searchInput = document.getElementById("vmSearch");
+    if (searchInput) {
+        searchInput.addEventListener("input", () => {
+            clearTimeout(_vmSearchTm);
+            _vmSearchTm = setTimeout(() => {
+                _vmSearch = searchInput.value.trim();
+                _vmPage   = 1;
+                loadVMs();
+            }, 350);   // wait 350ms after typing stops
+        });
+    }
+}
+
+function loadVMs() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const run_id    = document.getElementById("runFilter")?.value
+                      || urlParams.get("run_id") || "";
+    const host      = urlParams.get("host")    || "";
+    const cluster   = urlParams.get("cluster") || "";
+    const vcenter   = urlParams.get("vcenter") || "";
+
+    const apiParams = new URLSearchParams();
+    if (run_id)    apiParams.set("run_id",   run_id);
+    if (host)      apiParams.set("host",     host);
+    if (cluster)   apiParams.set("cluster",  cluster);
+    if (vcenter)   apiParams.set("vcenter",  vcenter);
+    if (_vmSearch) apiParams.set("q",        _vmSearch);
+    apiParams.set("page",     _vmPage);
+    apiParams.set("per_page", 100);
+
+    // Show loading state
+    const table = document.getElementById("vmsTable");
+    if (_vmPage === 1) {
+        table.innerHTML =
+            "<tr><td colspan='8' class='text-center text-muted py-3'>" +
+            "<div class='spinner-border spinner-border-sm me-2'></div>Loading…</td></tr>";
+    }
+
+    fetch("/api/vms?" + apiParams.toString())
+        .then(res => res.json())
+        .then(resp => {
+            _vmTotal = resp.total;
+            _vmPages = resp.pages;
+            const data = resp.data;
+
+            if (_vmPage === 1) table.innerHTML = "";
+
+            if (!data.length && _vmPage === 1) {
+                table.innerHTML =
+                    "<tr><td colspan='8' class='text-center text-muted py-3'>" +
+                    "No VMs found.</td></tr>";
+                updateVMPager();
+                return;
+            }
+
+            // Append rows (fast — use DocumentFragment)
+            const frag = document.createDocumentFragment();
+            data.forEach(vm => {
+                const tr = document.createElement("tr");
+                tr.innerHTML =
+                    `<td>${vm.vm_name}</td>` +
+                    `<td>${vm.vcenter_name || "-"}</td>` +
+                    `<td>${vm.cpu}</td>` +
+                    `<td>${vm.ram_mb}</td>` +
+                    `<td>${vm.os || "-"}</td>` +
+                    `<td>${vm.ip_address || "-"}</td>` +
+                    `<td>${vm.disk_count}</td>` +
+                    `<td>${vm.total_disk_gb}</td>`;
+                frag.appendChild(tr);
+            });
+            table.appendChild(frag);
+            updateVMPager();
+        })
+        .catch(err => {
+            table.innerHTML =
+                `<tr><td colspan="8" class="text-danger">Error: ${err.message}</td></tr>`;
+        });
+}
+
+function updateVMPager() {
+    const pager = document.getElementById("vm-pager");
+    const info  = document.getElementById("vm-pager-info");
+    if (!pager) return;
+
+    const start = (_vmPage - 1) * 100 + 1;
+    const end   = Math.min(_vmPage * 100, _vmTotal);
+    if (info) info.textContent = _vmTotal > 0
+        ? `Showing ${start}–${end} of ${_vmTotal.toLocaleString()} VMs`
+        : "No VMs found";
+
+    const prevBtn = document.getElementById("vm-prev");
+    const nextBtn = document.getElementById("vm-next");
+    if (prevBtn) prevBtn.disabled = _vmPage <= 1;
+    if (nextBtn) nextBtn.disabled = _vmPage >= _vmPages;
+}
+
+function vmPagePrev() { if (_vmPage > 1)       { _vmPage--; loadVMs(); } }
+function vmPageNext() { if (_vmPage < _vmPages) { _vmPage++; loadVMs(); } }
+
+
+// ═══════════════════════════════════════════════════════════
+//  DATASTORES
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/datastores") {
+    loadRunFilter(initDatastores);
+}
+
+function initDatastores() {
+    loadDatastores();
+    liveSearch("datastoreSearch", "datastoresTable");
+}
+
+function loadDatastores() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("run_id")) {
+        const rs = document.getElementById("runFilter");
+        if (rs?.value) params.set("run_id", rs.value);
+    }
+
+    fetch("/api/datastores?" + params.toString())
+        .then(res => res.json())
+        .then(data => {
+            const table = document.getElementById("datastoresTable");
+            table.innerHTML = "";
+
+            if (!data.length) {
+                table.innerHTML = "<td><td colspan='12'>No datastores found</td></tr>";
+                return;
+            }
+
+            // Helper: format GB as TB (with optional GB in parentheses)
+            function formatTB(gb, showGB = true) {
+                if (gb === null || gb === undefined) return "N/A";
+                const tb = gb / 1024;
+                if (showGB) {
+                    return `${tb.toFixed(1)} TB <small>(${gb.toFixed(0)} GB)</small>`;
+                }
+                return `${tb.toFixed(1)} TB`;
+            }
+
+            // Simple GB formatter (for columns that should stay in GB)
+            function formatGB(gb) {
+                if (gb === null || gb === undefined) return "N/A";
+                return `${gb.toFixed(0)} GB`;
+            }
+
+            // Progress bar (unchanged, works with free_percent)
+            function pBar(pct) {
+                const color = pct > 90 ? "red" : pct > 70 ? "orange" : "green";
+                return `<div class="progress"><div class="progress-bar"
+                    style="width:${pct}%;background:${color}">${parseFloat(pct).toFixed(1)}%</div></div>`;
+            }
+
+            data.forEach(ds => {
+                table.innerHTML += `
+                    <tr>
+                        <td>${ds.datastore_name}</td>
+                        <td>${ds.cluster_name}</td>
+                        <td>${ds.status}</td>
+                        <td>${ds.is_accessible ? "Yes" : "No"}</td>
+                        <td>${ds.type}</td>
+                        <td>${ds.num_vms}</td>
+                        <td>${formatTB(ds.capacity_gb)}</td>
+                        <td>${pBar(100 - ds.free_percent)}${formatTB(ds.used_gb)}</td>
+                        <td>${formatTB(ds.free_gb)}</td>
+                        <td>${parseFloat(ds.free_percent).toFixed(1)}%</td>
+                        <td>${ds.provisioned_gb ? formatTB(ds.provisioned_gb) : "N/A"}</td>
+                        <td><a href="/datastore_vms?datastore=${encodeURIComponent(ds.datastore_name)}&cluster=${encodeURIComponent(ds.cluster_name)}&run_id=${ds.run_id}">${ds.datastore_name}</a></td>
+                    </tr>
+                `;
+            });
+        })
+        .catch(err => console.error("Error loading datastores:", err));
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DATASTORE VMs
+// ═══════════════════════════════════════════════════════════
+if (window.location.pathname === "/datastore_vms") {
+    loadDatastoreVMs();
+}
+
+function loadDatastoreVMs() {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.get("run_id")) {
+        const rs = document.getElementById("runFilter");
+        if (rs?.value) params.set("run_id", rs.value);
+    }
+
+    fetch("/api/datastore_vms?" + params.toString())
+        .then(res => res.json())
+        .then(data => {
+            const table = document.getElementById("dsVMsTable");
+            table.innerHTML = "";
+            if (!data.length) {
+                table.innerHTML = "<tr><td colspan='7'>No VMs found</td></tr>";
+                return;
+            }
+            data.forEach(vm => {
+                table.innerHTML += `
+                    <tr>
+                        <td>${vm.vm_name}</td>
+                        <td>${vm.vcenter_name || "-"}</td>
+                        <td>${vm.cpu}</td>
+                        <td>${vm.ram_mb}</td>
+                        <td>${vm.os}</td>
+                        <td>${vm.ip_address || "-"}</td>
+                        <td>${vm.total_disk_gb}</td>
+                    </tr>`;
+            });
+        })
+        .catch(err => {
+            document.getElementById("dsVMsTable").innerHTML =
+                `<tr><td colspan='7'>Error: ${err}</td></tr>`;
+        });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  RUN SCRIPT
+// ═══════════════════════════════════════════════════════════
+function runScript() {
+    const out = document.getElementById("scriptOutput");
+    out.innerHTML = "Running script...\n";
+    fetch("/api/run_script", { method: "POST" })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === "success") {
+                out.innerHTML =
+                    "=== STDOUT ===\n" + data.stdout +
+                    "\n\n=== STDERR ===\n" + data.stderr +
+                    "\n\nReturn Code: " + data.returncode;
+            } else {
+                out.innerHTML = "Error: " + data.error;
+            }
+        })
+        .catch(err => { out.innerHTML = "Request Failed: " + err; });
+}
+
+
+// ═══════════════════════════════════════════════════════════
+//  SHARED: loadRunFilter
+// ═══════════════════════════════════════════════════════════
+function loadRunFilter(callback) {
+    fetch("/api/dashboard")
+        .then(res => res.json())
+        .then(data => {
+            const runSelect = document.getElementById("runFilter");
+            if (!runSelect) { if (callback) callback(); return; }
+
+            runSelect.innerHTML = "";
+            data.runs.forEach(run => {
+                runSelect.innerHTML +=
+                    `<option value="${run.run_id}">Run ${run.run_id} - ${run.run_timestamp}</option>`;
+            });
+
+            const params      = new URLSearchParams(window.location.search);
+            const selectedRun = params.get("run_id") || data.run_id;
+            runSelect.value   = selectedRun;
+
+            if (!params.get("run_id")) {
+                params.set("run_id", selectedRun);
+                window.history.replaceState(null, "", "?" + params.toString());
+            }
+
+            runSelect.onchange = function () {
+                params.set("run_id", this.value);
+                window.location.search = params.toString();
+            };
+
+            if (callback) callback();
+        });
+}

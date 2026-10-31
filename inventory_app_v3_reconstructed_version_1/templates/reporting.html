@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infrastructure Reporting</title>
+    <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.css">
+    <script src="/static/vendor/chartjs/dist/chart.umd.js"></script>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        :root{
+            --bg:#f3f4f6;--card:#fff;--text:#1f2937;--border:#e5e7eb;
+            --primary:#3b82f6;--primary-d:#2563eb;
+            --success:#10b981;--warning:#f59e0b;--danger:#ef4444;
+            --muted:#6b7280;
+        }
+        body.dark{--bg:#0f172a;--card:#1e293b;--text:#f1f5f9;--border:#334155;--muted:#94a3b8}
+        body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);transition:.2s}
+        .wrap{max-width:2400px;margin:0 auto;padding:1.5rem}
+
+        .page-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem}
+        .page-title{font-size:1.6rem;font-weight:700;background:linear-gradient(135deg,#3b82f6,#8b5cf6);-webkit-background-clip:text;background-clip:text;color:transparent}
+        .header-actions{display:flex;gap:.5rem;flex-wrap:wrap}
+
+        .tabs{display:flex;flex-wrap:wrap;gap:14.375rem;margin-bottom:1.5rem;border-bottom:2px solid var(--border);padding-bottom:.75rem}
+        .tab-btn{background:transparent;border:none;padding:.5rem 1.1rem;border-radius:2rem;font-weight:500;cursor:pointer;color:var(--muted);transition:.2s;font-size:.9rem}
+        .tab-btn:hover{background:var(--card);color:var(--text)}
+        .tab-btn.active{background:var(--primary);color:#fff}
+        .panel{display:none}.panel.active{display:block}
+
+        .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:1rem;margin-bottom:1.5rem}
+        .stat-card{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1.25rem;position:relative;overflow:hidden}
+        .stat-card .icon{position:absolute;right:1rem;top:1rem;font-size:1.5rem;opacity:.12}
+        .stat-card .label{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.35rem}
+        .stat-card .value{font-size:1.65rem;font-weight:700;line-height:1}
+        .stat-card .sub{font-size:.75rem;color:var(--muted);margin-top:.35rem}
+        .stat-card.danger{border-left:4px solid var(--danger)}
+        .stat-card.warning{border-left:4px solid var(--warning)}
+        .stat-card.success{border-left:4px solid var(--success)}
+        .stat-card.primary{border-left:4px solid var(--primary)}
+
+        .chart-box{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1.25rem;margin-bottom:1.25rem}
+        .chart-box h4{font-size:.9rem;font-weight:600;margin-bottom:1rem;color:var(--muted)}
+        canvas{max-height:280px}
+
+        .tbl-wrap{background:var(--card);border:1px solid var(--border);border-radius:.75rem;overflow:hidden;margin-bottom:1.25rem}
+        .tbl-wrap .tbl-head{display:flex;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+        .tbl-wrap .tbl-head h4{font-size:.9rem;font-weight:600;margin:0}
+        table{width:100%;border-collapse:collapse;font-size:.82rem}
+        thead tr{background:var(--bg)}
+        th{padding:.6rem .75rem;text-align:left;font-weight:600;font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);white-space:nowrap}
+        td{padding:.6rem .75rem;border-top:1px solid var(--border);vertical-align:middle}
+        tr:hover td{background:var(--bg)}
+        a.text-primary{color:var(--primary);text-decoration:none;font-weight:500}
+        a.text-primary:hover{text-decoration:underline}
+
+        .badge{display:inline-block;padding:.2rem .55rem;border-radius:2rem;font-size:.72rem;font-weight:600}
+        .badge-vmware{background:#dbeafe;color:#1d4ed8}
+        .badge-hyperv{background:#e0f2fe;color:#0369a1}
+        .badge-on{background:#dcfce7;color:#15803d}
+        .badge-off{background:#fee2e2;color:#b91c1c}
+        .badge-warn{background:#fef9c3;color:#854d0e}
+
+        .filters{display:flex;flex-wrap:wrap;gap:.75rem;margin-bottom:1.25rem;align-items:flex-end}
+        .fg{display:flex;flex-direction:column;gap:.3rem}
+        .fg label{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+        select,input[type=date]{padding:.45rem .7rem;border-radius:.5rem;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:.85rem}
+        .btn{padding:.45rem 1rem;border-radius:.5rem;border:none;cursor:pointer;font-weight:500;font-size:.85rem;transition:.2s}
+        .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-d)}
+        .btn-outline{background:transparent;border:1px solid var(--border);color:var(--text)}.btn-outline:hover{background:var(--bg)}
+        .btn-success{background:var(--success);color:#fff}
+        .btn-sm{padding:.3rem .7rem;font-size:.78rem}
+
+        .delta-up{color:var(--success);font-weight:600}
+        .delta-down{color:var(--danger);font-weight:600}
+
+        .two-col{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
+        .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1.25rem}
+        @media(max-width:1100px){.three-col{grid-template-columns:1fr 1fr}}
+        @media(max-width:900px){.two-col,.three-col{grid-template-columns:1fr}}
+
+        .prog-bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden;margin-top:.3rem}
+        .prog-fill{height:100%;border-radius:3px;transition:width .4s}
+
+        .change-tag{display:inline-flex;align-items:center;gap:3px;background:var(--bg);border:1px solid var(--border);border-radius:.375rem;padding:2px 7px;font-size:.72rem;margin:2px}
+        .change-tag .old{text-decoration:line-through;color:var(--muted)}
+        .change-tag .new{color:var(--primary);font-weight:600}
+
+        .risk-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+        .risk-high{background:var(--danger)}
+        .risk-med{background:var(--warning)}
+        .risk-low{background:var(--success)}
+
+        .empty{text-align:center;padding:2.5rem;color:var(--muted);font-size:.9rem}
+        .spinner{display:inline-block;width:20px;height:20px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
+        @keyframes spin{to{transform:rotate(360deg)}}
+
+        .cmp-table{width:100%;border-collapse:collapse;background:var(--card);border-radius:.75rem;overflow:hidden;margin-bottom:1.25rem}
+        .cmp-table th{background:var(--primary);color:#fff;padding:.75rem 1rem;text-align:left}
+        .cmp-table td{padding:.75rem 1rem;border-top:1px solid var(--border);vertical-align:top}
+        .cmp-table small{font-size:.72rem;color:var(--muted);display:block;margin-top:.2rem}
+
+        .filter-box{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-bottom:1.25rem}
+
+        /* ── Infrastructure history ── */
+        .infra-metric-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.75rem;margin-bottom:1rem}
+        .infra-kpi{background:var(--card);border:1px solid var(--border);border-radius:.5rem;padding:.75rem 1rem}
+        .infra-kpi .k-label{font-size:.7rem;color:var(--muted);text-transform:uppercase;font-weight:600}
+        .infra-kpi .k-val{font-size:1.2rem;font-weight:700;margin-top:.2rem}
+        .infra-kpi .k-sub{font-size:.72rem;color:var(--muted);margin-top:.1rem}
+
+        /* ── Period averages ── */
+        .infra-avg-section-title{font-size:.9rem;font-weight:600;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem;color:var(--text)}
+        .infra-avg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.25rem}
+        @media(max-width:900px){.infra-avg-grid{grid-template-columns:1fr}}
+        .infra-avg-card{background:var(--card);border:1px solid var(--border);border-radius:.75rem;padding:1rem 1.25rem}
+        .infra-avg-card .k-label{font-size:.72rem;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.35rem}
+        .infra-avg-card .k-val{font-size:1.6rem;font-weight:700;line-height:1;margin-bottom:.25rem}
+        .infra-avg-card .k-sub{font-size:.75rem;color:var(--muted);margin-bottom:.5rem;line-height:1.5}
+        .infra-avg-bar{height:8px;border-radius:4px;background:var(--border);overflow:hidden}
+        .infra-avg-fill{height:100%;border-radius:4px;transition:width .5s}
+
+        /* ── Sortable table headers ── */
+        th.sortable{cursor:pointer;user-select:none}
+        th.sortable:hover{background:var(--card);color:var(--text)}
+        th.sort-active{color:var(--primary)}
+        .sort-icon{opacity:.5;font-style:normal;margin-left:3px;font-size:.7rem}
+        th.sort-active .sort-icon{opacity:1}
+
+        /* ── Detail table inside compare ── */
+        .detail-tbl{width:100%;border-collapse:collapse;font-size:.78rem;margin-top:.5rem}
+        .detail-tbl th{padding:.4rem .6rem;background:var(--bg);font-weight:600;text-align:left;border-bottom:1px solid var(--border)}
+        .detail-tbl td{padding:.4rem .6rem;border-bottom:1px solid var(--border)}
+    </style>
+</head>
+<body>
+<div class="wrap">
+
+    <div class="page-header">
+        <div class="page-title"><i class="bi bi-bar-chart-line-fill"></i> Infrastructure Reporting</div>
+        <div class="header-actions">
+            <button class="btn btn-outline" onclick="toggleTheme()"><i class="bi bi-moon-stars"></i> Theme</button>
+            <button class="btn btn-success btn-sm" onclick="exportCurrentTab()"><i class="bi bi-download"></i> Export CSV</button>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" data-tab="overview"><i class="bi bi-grid-1x2"></i> Overview</button>
+        <button class="tab-btn" data-tab="vms"><i class="bi bi-hdd-stack"></i> VM Analytics</button>
+        <button class="tab-btn" data-tab="capacity"><i class="bi bi-speedometer2"></i> Capacity</button>
+        <button class="tab-btn" data-tab="changes"><i class="bi bi-arrow-left-right"></i> Changes</button>
+        <button class="tab-btn" data-tab="infra"><i class="bi bi-building"></i> Infrastructure History</button>
+        <button class="tab-btn" data-tab="trends"><i class="bi bi-graph-up"></i> Trends</button>
+        <button class="tab-btn" data-tab="compare"><i class="bi bi-calendar-range"></i> Compare Periods</button>
+    </div>
+
+    <!-- ═══════════════════ OVERVIEW ═══════════════════ -->
+    <div id="overview" class="panel active">
+        <div class="stat-grid" id="overviewCards"><div class="empty"><div class="spinner"></div></div></div>
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-cpu"></i> CPU &amp; Memory by Cluster</h4><canvas id="cpuChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-hdd"></i> Storage by Cluster</h4><canvas id="storageChart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ VM ANALYTICS ═══════════════════ -->
+    <div id="vms" class="panel">
+        <div class="stat-grid" id="vmStatCards"><div class="empty"><div class="spinner"></div></div></div>
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-pie-chart"></i> OS Distribution</h4><canvas id="osChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-power"></i> Power State</h4><canvas id="powerChart"></canvas></div>
+        </div>
+        <div class="two-col">
+            <div class="tbl-wrap">
+                <div class="tbl-head"><h4><i class="bi bi-memory"></i> Top 10 by RAM</h4></div>
+                <table><thead><tr><th>VM Name</th><th>Platform</th><th>RAM (GB)</th><th>CPU</th><th>Disk (GB)</th><th>Power</th></tr></thead>
+                <tbody id="topRamTable"></tbody></table>
+            </div>
+            <div class="tbl-wrap">
+                <div class="tbl-head"><h4><i class="bi bi-hdd-fill"></i> Top 10 by Disk</h4></div>
+                <table><thead><tr><th>VM Name</th><th>Platform</th><th>Disk (GB)</th><th>CPU</th><th>RAM (GB)</th><th>Power</th></tr></thead>
+                <tbody id="topDiskTable"></tbody></table>
+            </div>
+        </div>
+        <div class="tbl-wrap">
+            <div class="tbl-head">
+                <h4><i class="bi bi-stop-circle"></i> Powered-Off VMs <span id="poweredOffCount" class="badge badge-warn"></span></h4>
+                <button class="btn btn-outline btn-sm" onclick="exportTableCSV('poweredOffTable','powered_off_vms')"><i class="bi bi-download"></i> Export</button>
+            </div>
+            <table><thead><tr><th>VM Name</th><th>Platform</th><th>OS</th><th>CPU</th><th>RAM (GB)</th><th>Disk (GB)</th><th>IP</th></tr></thead>
+            <tbody id="poweredOffTable"></tbody></table>
+        </div>
+        <div class="tbl-wrap">
+            <div class="tbl-head">
+                <h4><i class="bi bi-wifi-off"></i> VMs Without IP <span id="noIpCount" class="badge badge-warn"></span></h4>
+                <button class="btn btn-outline btn-sm" onclick="exportTableCSV('noIpTable','vms_no_ip')"><i class="bi bi-download"></i> Export</button>
+            </div>
+            <table><thead><tr><th>VM Name</th><th>Platform</th><th>OS</th><th>Power State</th></tr></thead>
+            <tbody id="noIpTable"></tbody></table>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ CAPACITY ═══════════════════ -->
+    <div id="capacity" class="panel">
+        <div style="font-size:.9rem;font-weight:600;margin-bottom:.75rem;display:flex;align-items:center;gap:.5rem">
+            <i class="bi bi-exclamation-triangle-fill" style="color:var(--danger)"></i> At-Risk Clusters (&gt;80%)
+        </div>
+        <div id="atRiskCards" class="stat-grid"></div>
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-hdd-network"></i> Disk Growth per Cluster (GB)</h4><canvas id="diskGrowthChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-pc-display"></i> VM Count Growth per Cluster</h4><canvas id="vmGrowthChart"></canvas></div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ CHANGES ═══════════════════ -->
+    <div id="changes" class="panel">
+        <div class="filter-box">
+            <div class="filters" style="margin-bottom:0">
+                <div class="fg">
+                    <label>VMware — compare latest against</label>
+                    <select id="vcPrevOffset" onchange="loadChanges()">
+                        <option value="1">Previous run (1 back)</option>
+                    </select>
+                </div>
+                <div class="fg">
+                    <label>Hyper-V — compare latest against</label>
+                    <select id="hvPrevOffset" onchange="loadChanges()">
+                        <option value="1">Previous run (1 back)</option>
+                    </select>
+                </div>
+                <div class="fg" style="justify-content:flex-end">
+                    <button class="btn btn-primary" onclick="loadChanges()"><i class="bi bi-arrow-repeat"></i> Refresh</button>
+                    <div class="dropdown d-inline-block">
+                        <button class="btn btn-success dropdown-toggle" type="button"
+                                data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-download me-1"></i>Export
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-end">
+                            <li><a class="dropdown-item" href="#" onclick="exportChanges('csv'); return false;">
+                                <i class="bi bi-filetype-csv me-2"></i>CSV</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="exportChanges('xlsx'); return false;">
+                                <i class="bi bi-file-earmark-excel me-2"></i>Excel</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="changesRunInfo" class="stat-grid" style="margin-bottom:1rem"></div>
+
+        <div class="two-col" style="margin-bottom:1.25rem">
+            <div class="tbl-wrap">
+                <div class="tbl-head">
+                    <h4><i class="bi bi-plus-circle-fill" style="color:var(--success)"></i> Added VMs <span id="addedCount" class="badge badge-on"></span></h4>
+                    <button class="btn btn-outline btn-sm" onclick="exportTableCSV('addedTable','added_vms')"><i class="bi bi-download"></i> Export</button>
+                </div>
+                <table><thead><tr><th>VM Name</th><th>Platform</th><th>CPU</th><th>RAM (GB)</th><th>Disk (GB)</th><th>Detected at</th></tr></thead>
+                <tbody id="addedTable"></tbody></table>
+            </div>
+            <div class="tbl-wrap">
+                <div class="tbl-head">
+                    <h4><i class="bi bi-dash-circle-fill" style="color:var(--danger)"></i> Removed VMs <span id="removedCount" class="badge badge-off"></span></h4>
+                    <button class="btn btn-outline btn-sm" onclick="exportTableCSV('removedTable','removed_vms')"><i class="bi bi-download"></i> Export</button>
+                </div>
+                <table><thead><tr><th>VM Name</th><th>Platform</th><th>CPU</th><th>RAM (GB)</th><th>Disk (GB)</th><th>Last seen at</th></tr></thead>
+                <tbody id="removedTable"></tbody></table>
+            </div>
+        </div>
+
+        <div class="tbl-wrap">
+            <div class="tbl-head">
+                <h4><i class="bi bi-pencil-square"></i> Changed VMs <span id="changedCount" class="badge badge-warn"></span></h4>
+                <button class="btn btn-outline btn-sm" onclick="exportTableCSV('changedTable','changed_vms')"><i class="bi bi-download"></i> Export</button>
+            </div>
+            <table><thead><tr><th>VM Name</th><th>Platform</th><th>Changed at</th><th>Changes</th></tr></thead>
+            <tbody id="changedTable"></tbody></table>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ INFRASTRUCTURE HISTORY ═══════════════════ -->
+    <div id="infra" class="panel">
+        <div class="filter-box">
+            <div class="filters" style="margin-bottom:0">
+                <div class="fg">
+                    <label>Environment</label>
+                    <select id="infraEnv" style="min-width:200px"><option value="">— Select —</option></select>
+                </div>
+                <div class="fg">
+                    <label>Platform</label>
+                    <select id="infraPlatform">
+                        <option value="VMware">VMware</option>
+                        <option value="Hyper-V">Hyper-V</option>
+                    </select>
+                </div>
+                <div class="fg">
+                    <label>Period</label>
+                    <select id="infraPeriod">
+                        <option value="1w">1 week — all runs</option>
+                        <option value="2w">2 weeks — all runs</option>
+                        <option value="3w">3 weeks — all runs</option>
+                        <option value="1m" selected>1 month — first &amp; last of each week</option>
+                        <option value="2m">2 months — first &amp; last of each week</option>
+                        <option value="3m">3 months — first &amp; last of each week</option>
+                        <option value="4m">4 months — first &amp; last of each week</option>
+                        <option value="5m">5 months — first &amp; last of each week</option>
+                        <option value="6m">6 months — first &amp; last of each week</option>
+                        <option value="7m">7 months — first &amp; last of each week</option>
+                        <option value="8m">8 months — first &amp; last of each week</option>
+                        <option value="9m">9 months — first &amp; last of each week</option>
+                        <option value="10m">10 months — first &amp; last of each week</option>
+                        <option value="11m">11 months — first &amp; last of each week</option>
+                        <option value="12m">12 months — first &amp; last of each week</option>
+                        <option value="1y">1 year — first run of each month</option>
+                        <option value="2y">2 years — first run of each month</option>
+                        <option value="3y">3 years — first run of each month</option>
+                    </select>
+                </div>
+                <div class="fg" style="justify-content:flex-end">
+                    <button class="btn btn-primary" onclick="loadInfraHistory()">
+                        <i class="bi bi-arrow-repeat"></i> Load
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Latest snapshot KPIs -->
+        <div id="infraKpis" class="infra-metric-row"></div>
+
+        <!-- Period averages (injected after load) -->
+        <div id="infraAvgCards" style="margin-bottom:1.25rem"></div>
+
+        <!-- Charts -->
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-cpu"></i> CPU Usage % over time</h4><canvas id="infraCpuChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-memory"></i> Memory Usage % over time</h4><canvas id="infraMemChart"></canvas></div>
+        </div>
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-hdd"></i> Storage Usage % over time</h4><canvas id="infraStorChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-pc-display"></i> VM Count over time</h4><canvas id="infraVmChart"></canvas></div>
+        </div>
+        <div class="two-col">
+            <div class="chart-box"><h4><i class="bi bi-lightning"></i> Total CPU (GHz) vs Used CPU (GHz)</h4><canvas id="infraCpuMhzChart"></canvas></div>
+            <div class="chart-box"><h4><i class="bi bi-database"></i> Total Memory (TB) vs Used Memory (TB)</h4><canvas id="infraMemGbChart"></canvas></div>
+        </div>
+        <div class="chart-box"><h4><i class="bi bi-hdd-stack"></i> Total Storage (TB) vs Used Storage (TB)</h4><canvas id="infraStorGbChart"></canvas></div>
+
+        <!-- Data table -->
+        <div class="tbl-wrap">
+            <div class="tbl-head">
+                <h4><i class="bi bi-table"></i> All Data Points</h4>
+                <button class="btn btn-outline btn-sm" onclick="exportTableCSV('infraTable','infra_history')">
+                    <i class="bi bi-download"></i> Export
+                </button>
+            </div>
+            <div style="overflow-x:auto">
+            <table>
+                <thead><tr>
+                    <th>Timestamp</th>
+                    <th>VMs</th><th>Hosts</th><th>Clusters</th><th>Datastores</th>
+                    <th id="infra-th-cpu" class="sortable" onclick="sortInfraRuns('cpu')">
+                        CPU % <span class="sort-icon">⇅</span>
+                    </th>
+                    <th id="infra-th-mem" class="sortable" onclick="sortInfraRuns('mem')">
+                        Mem % <span class="sort-icon">⇅</span>
+                    </th>
+                    <th id="infra-th-stor" class="sortable" onclick="sortInfraRuns('stor')">
+                        Stor % <span class="sort-icon">⇅</span>
+                    </th>
+                    <th>Total CPU (GHz)</th><th>Used CPU (GHz)</th><th>Free CPU (GHz)</th>
+                    <th>Total Cores</th><th>Used Cores</th><th>Free Cores</th>
+                    <th>Total Mem (TB)</th><th>Used Mem (TB)</th><th>Free Mem (TB)</th>
+                    <th>Total Stor (TB)</th><th>Used Stor (TB)</th><th>Free Stor (TB)</th>
+                    <th>VM CPUs</th><th>VM Mem (TB)</th><th>VM Disk (TB)</th>
+                    <th>CPU Ratio</th><th>Mem Ratio</th><th>Stor Ratio</th>
+                </tr></thead>
+                <tbody id="infraTable"></tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ TRENDS ═══════════════════ -->
+    <div id="trends" class="panel">
+        <div class="filter-box">
+            <div class="filters" style="margin-bottom:0">
+                <div class="fg"><label>Cluster</label><select id="trendCluster"><option value="">— All clusters —</option></select></div>
+                <div class="fg"><label>Runs to show</label>
+                    <select id="trendRuns"><option>5</option><option selected>10</option><option>15</option><option>20</option><option>30</option></select>
+                </div>
+                <div class="fg" style="justify-content:flex-end">
+                    <button class="btn btn-primary" onclick="loadTrends()"><i class="bi bi-arrow-repeat"></i> Load</button>
+                </div>
+            </div>
+        </div>
+        <div class="chart-box"><h4><i class="bi bi-cpu"></i> CPU Trend</h4><canvas id="cpuTrendChart"></canvas></div>
+        <div class="chart-box"><h4><i class="bi bi-memory"></i> Memory Trend</h4><canvas id="memoryTrendChart"></canvas></div>
+        <div class="chart-box"><h4><i class="bi bi-hdd"></i> Storage Trend</h4><canvas id="storageTrendChart"></canvas></div>
+    </div>
+
+    <!-- ═══════════════════ COMPARE PERIODS ═══════════════════ -->
+    <div id="compare" class="panel">
+        <div class="filter-box">
+            <div class="filters" style="margin-bottom:.75rem">
+                <div class="fg">
+                    <label>Cluster</label>
+                    <select id="compareCluster" style="min-width:220px"><option value="">— Select —</option></select>
+                </div>
+                <div class="fg">
+                    <label>Period 1 (baseline)</label>
+                    <div style="display:flex;align-items:center;gap:.4rem">
+                        <input type="date" id="start1"><span style="color:var(--muted)">→</span><input type="date" id="end1">
+                    </div>
+                </div>
+                <div class="fg">
+                    <label>Period 2 (compare)</label>
+                    <div style="display:flex;align-items:center;gap:.4rem">
+                        <input type="date" id="start2"><span style="color:var(--muted)">→</span><input type="date" id="end2">
+                    </div>
+                </div>
+                <div class="fg" style="justify-content:flex-end">
+                    <button class="btn btn-primary" onclick="loadClusterComparison()"><i class="bi bi-arrow-left-right"></i> Compare</button>
+                </div>
+            </div>
+            <div class="filters" style="margin-bottom:0">
+                <div class="fg">
+                    <label>Quick preset</label>
+                    <select id="comparePreset" onchange="applyComparePreset()">
+                        <option value="">— Custom —</option>
+                        <option value="lastWeek">This week vs previous week</option>
+                        <option value="last2Weeks">Last 2 weeks vs previous 2 weeks</option>
+                        <option value="last3Weeks">Last 3 weeks vs previous 3 weeks</option>
+                        <option value="lastMonth">Last month vs previous month</option>
+                        <option value="last30vsPrevious30">Last 30 days vs previous 30 days</option>
+                        <option value="thisMonthLastYear">This month vs same month last year</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div id="comparisonResult"><div class="empty">Select a cluster and date ranges, then click Compare</div></div>
+    </div>
+
+</div><!-- /wrap -->
+
+<script>
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const esc     = s  => s==null?'':String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+const fmtRam  = mb => mb  ? (mb /1024).toFixed(1)+' GB' : '—';
+const fmtDisk = gb => gb  ? parseFloat(gb).toFixed(1)+' GB' : '—';
+const fmtPct  = v  => v   != null ? parseFloat(v).toFixed(1)+'%' : '—';
+const fmtNum  = v  => v   != null ? Number(v).toLocaleString() : '—';
+
+// TB / GHz helpers (Infrastructure History)
+const gbToTb   = gb  => gb  != null ? (parseFloat(gb)  / 1024).toFixed(3)+' TB'  : '—';
+const mhzToGhz = v   => v   != null ? (parseFloat(v)   / 1000).toFixed(2)+' GHz' : '—';
+const fmtCores = v   => v   != null ? Number(v).toLocaleString() : '—';
+
+function powerBadge(s){
+    if(!s) return '<span class="badge" style="background:#e5e7eb;color:#374151">?</span>';
+    const l=s.toLowerCase();
+    if(l==='poweredon'||l==='running') return '<span class="badge badge-on">On</span>';
+    if(l==='poweredoff'||l==='off')    return '<span class="badge badge-off">Off</span>';
+    return `<span class="badge" style="background:#e5e7eb;color:#374151">${esc(s)}</span>`;
+}
+function platBadge(p){
+    return p==='VMware'
+        ?'<span class="badge badge-vmware"><i class="bi bi-server"></i> VMware</span>'
+        :'<span class="badge badge-hyperv"><i class="bi bi-windows"></i> Hyper-V</span>';
+}
+function progBar(val,color){
+    const pct=Math.min(parseFloat(val)||0,100);
+    const col=pct>=90?'var(--danger)':pct>=80?'var(--warning)':(color||'var(--primary)');
+    return `<div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${col}"></div></div>`;
+}
+function arrow(d){
+    if(d===undefined||d===null) return '—';
+    if(d===0) return '<span style="color:var(--muted)">➡ 0%</span>';
+    return d<0?`<span class="delta-up">▼ ${Math.abs(d)}%</span>`:`<span class="delta-down">▲ ${Math.abs(d)}%</span>`;
+}
+function riskDot(cpu,mem,stor){
+    const m=Math.max(parseFloat(cpu)||0,parseFloat(mem)||0,parseFloat(stor)||0);
+    if(m>=90) return '<span class="risk-dot risk-high"></span>';
+    if(m>=80) return '<span class="risk-dot risk-med"></span>';
+    return '<span class="risk-dot risk-low"></span>';
+}
+const FIELD_LABELS={cpu:'CPU',ram_mb:'RAM',total_disk_gb:'Disk',power_state:'Power',os:'OS',ip_address:'IP'};
+function fmtFieldVal(f,v){
+    if(v===null||v===undefined) return '—';
+    if(f==='ram_mb')        return fmtRam(v);
+    if(f==='total_disk_gb') return fmtDisk(v);
+    return esc(String(v));
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+function toggleTheme(){
+    document.body.classList.toggle('dark');
+    localStorage.theme=document.body.classList.contains('dark')?'dark':'light';
+}
+if(localStorage.theme==='dark') document.body.classList.add('dark');
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+const tabLoaded={};
+function switchTab(id){
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.toggle('active',b.dataset.tab===id));
+    document.getElementById(id).classList.add('active');
+    if(!tabLoaded[id]){
+        tabLoaded[id]=true;
+        if(id==='overview')  loadOverview();
+        if(id==='vms')       loadVmAnalytics();
+        if(id==='capacity')  loadCapacity();
+        if(id==='changes')   loadChanges();
+        if(id==='infra')     loadEnvList();
+        if(id==='trends')    { loadClustersList('trendCluster'); loadTrends(); }
+        if(id==='compare')   { loadClustersList('compareCluster'); setDefaultDates(); }
+    }
+}
+document.querySelectorAll('.tab-btn').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+
+// ── Chart registry ────────────────────────────────────────────────────────────
+const charts={};
+function mkChart(id,type,data,options={}){
+    if(charts[id]) charts[id].destroy();
+    charts[id]=new Chart(document.getElementById(id),{type,data,options:{responsive:true,plugins:{legend:{position:'bottom'}},scales:{y:{min:0}},...options}});
+}
+
+// ── OVERVIEW ──────────────────────────────────────────────────────────────────
+let overviewCSVData=null;
+async function loadOverview(){
+    const d=await fetch('/api/reporting/overview').then(r=>r.json());
+    const s=d.summary;
+    document.getElementById('overviewCards').innerHTML=`
+        <div class="stat-card primary"><div class="icon"><i class="bi bi-diagram-3"></i></div><div class="label">Clusters</div><div class="value">${s.total_clusters}</div><div class="sub">VMware ${s.vmware_clusters} · Hyper-V ${s.hyperv_clusters}</div></div>
+        <div class="stat-card primary"><div class="icon"><i class="bi bi-server"></i></div><div class="label">Hosts</div><div class="value">${s.total_hosts}</div><div class="sub">VMware ${s.vmware_hosts} · Hyper-V ${s.hyperv_hosts}</div></div>
+        <div class="stat-card primary"><div class="icon"><i class="bi bi-hdd-stack"></i></div><div class="label">Total VMs</div><div class="value">${s.total_vms}</div><div class="sub">VMware ${s.vmware_vms} · Hyper-V ${s.hyperv_vms}</div></div>
+        <div class="stat-card primary"><div class="icon"><i class="bi bi-database"></i></div><div class="label">Datastores</div><div class="value">${s.total_datastores}</div></div>
+        <div class="stat-card ${s.avg_cpu_usage>80?'danger':s.avg_cpu_usage>60?'warning':'success'}"><div class="icon"><i class="bi bi-cpu"></i></div><div class="label">Avg CPU</div><div class="value">${s.avg_cpu_usage}%</div>${progBar(s.avg_cpu_usage)}</div>
+        <div class="stat-card ${s.avg_memory_usage>80?'danger':s.avg_memory_usage>60?'warning':'success'}"><div class="icon"><i class="bi bi-memory"></i></div><div class="label">Avg Memory</div><div class="value">${s.avg_memory_usage}%</div>${progBar(s.avg_memory_usage,'#10b981')}</div>
+        <div class="stat-card ${s.avg_storage_usage>80?'danger':s.avg_storage_usage>60?'warning':'success'}"><div class="icon"><i class="bi bi-hdd"></i></div><div class="label">Avg Storage</div><div class="value">${s.avg_storage_usage}%</div>${progBar(s.avg_storage_usage,'#f59e0b')}</div>
+    `;
+    mkChart('cpuChart','bar',{labels:d.chart.labels,datasets:[
+        {label:'CPU %',    data:d.chart.cpu_data,    backgroundColor:'#3b82f680',borderColor:'#3b82f6',borderWidth:1},
+        {label:'Memory %', data:d.chart.memory_data, backgroundColor:'#10b98180',borderColor:'#10b981',borderWidth:1}
+    ]},{scales:{y:{max:100,min:0}}});
+    mkChart('storageChart','bar',{labels:d.chart.labels,datasets:[
+        {label:'Storage %',data:d.chart.storage_data,backgroundColor:'#f59e0b80',borderColor:'#f59e0b',borderWidth:1}
+    ]},{scales:{y:{max:100,min:0}}});
+    overviewCSVData=d.chart;
+}
+
+// ── VM ANALYTICS ──────────────────────────────────────────────────────────────
+let vmAnalyticsData=null;
+async function loadVmAnalytics(){
+    const d=await fetch('/api/reporting/vm_analytics').then(r=>r.json());
+    vmAnalyticsData=d;
+    document.getElementById('vmStatCards').innerHTML=`
+        <div class="stat-card ${d.powered_off.length>0?'warning':'success'}"><div class="icon"><i class="bi bi-stop-circle"></i></div><div class="label">Powered Off</div><div class="value">${d.powered_off.length}</div><div class="sub">Non-template VMs</div></div>
+        <div class="stat-card ${d.no_ip.length>0?'warning':'success'}"><div class="icon"><i class="bi bi-wifi-off"></i></div><div class="label">No IP Address</div><div class="value">${d.no_ip.length}</div><div class="sub">May need attention</div></div>
+        <div class="stat-card primary"><div class="icon"><i class="bi bi-copy"></i></div><div class="label">Templates</div><div class="value">${d.template_counts.templates}</div><div class="sub">vs ${d.template_counts.vms} VMs</div></div>
+    `;
+    mkChart('osChart','doughnut',{labels:d.os_dist.map(o=>o.os_group),datasets:[{data:d.os_dist.map(o=>o.cnt),backgroundColor:['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#06b6d4','#84cc16','#f97316']}]},{scales:{}});
+    mkChart('powerChart','doughnut',{labels:d.power_dist.map(p=>p.power_state),datasets:[{data:d.power_dist.map(p=>p.cnt),backgroundColor:['#10b981','#ef4444','#6b7280']}]},{scales:{}});
+    document.getElementById('topRamTable').innerHTML=d.top_ram.map(v=>`<tr><td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td><td>${platBadge(v.platform)}</td><td><strong>${fmtRam(v.ram_mb)}</strong></td><td>${v.cpu||'—'}</td><td>${fmtDisk(v.total_disk_gb)}</td><td>${powerBadge(v.power_state)}</td></tr>`).join('');
+    document.getElementById('topDiskTable').innerHTML=d.top_disk.map(v=>`<tr><td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td><td>${platBadge(v.platform)}</td><td><strong>${fmtDisk(v.total_disk_gb)}</strong></td><td>${v.cpu||'—'}</td><td>${fmtRam(v.ram_mb)}</td><td>${powerBadge(v.power_state)}</td></tr>`).join('');
+    document.getElementById('poweredOffCount').textContent=d.powered_off.length;
+    document.getElementById('poweredOffTable').innerHTML=d.powered_off.length
+        ?d.powered_off.map(v=>`<tr><td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td><td>${platBadge(v.platform)}</td><td>${esc(v.os||'—')}</td><td>${v.cpu||'—'}</td><td>${fmtRam(v.ram_mb)}</td><td>${fmtDisk(v.total_disk_gb)}</td><td>${esc(v.ip_address||'—')}</td></tr>`).join('')
+        :'<tr><td colspan="7" class="empty">No powered-off VMs 🎉</td></tr>';
+    document.getElementById('noIpCount').textContent=d.no_ip.length;
+    document.getElementById('noIpTable').innerHTML=d.no_ip.length
+        ?d.no_ip.map(v=>`<tr><td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td><td>${platBadge(v.platform)}</td><td>${esc(v.os||'—')}</td><td>${powerBadge(v.power_state)}</td></tr>`).join('')
+        :'<tr><td colspan="4" class="empty">All VMs have IP addresses 🎉</td></tr>';
+}
+
+// ── CAPACITY ──────────────────────────────────────────────────────────────────
+async function loadCapacity(){
+    const d=await fetch('/api/reporting/capacity').then(r=>r.json());
+    const riskEl=document.getElementById('atRiskCards');
+    if(!d.at_risk.length){
+        riskEl.innerHTML='<div class="empty" style="grid-column:1/-1">No clusters above 80% — all healthy ✅</div>';
+    } else {
+        riskEl.innerHTML=d.at_risk.map(c=>`
+            <div class="stat-card danger">
+                <div class="label">${riskDot(c.cpu_usage_percent,c.memory_usage_percent,c.storage_usage_percent)}${esc(c.cluster_name)} <small style="font-weight:400">${esc(c.platform)}</small></div>
+                <div style="margin-top:.5rem;font-size:.8rem">
+                    CPU: <strong>${fmtPct(c.cpu_usage_percent)}</strong>${progBar(c.cpu_usage_percent)}
+                    RAM: <strong>${fmtPct(c.memory_usage_percent)}</strong>${progBar(c.memory_usage_percent,'#10b981')}
+                    Disk: <strong>${fmtPct(c.storage_usage_percent)}</strong>${progBar(c.storage_usage_percent,'#f59e0b')}
+                </div>
+            </div>`).join('');
+    }
+    const colors=['#3b82f6','#ef4444','#10b981','#f59e0b','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
+    if(d.disk_growth.datasets&&d.disk_growth.datasets.length)
+        mkChart('diskGrowthChart','line',{labels:d.disk_growth.timestamps,datasets:d.disk_growth.datasets.map((ds,i)=>({...ds,borderColor:colors[i%colors.length],backgroundColor:colors[i%colors.length]+'33'}))},{scales:{y:{min:0}}});
+    if(d.vm_growth.datasets&&d.vm_growth.datasets.length)
+        mkChart('vmGrowthChart','line',{labels:d.vm_growth.timestamps,datasets:d.vm_growth.datasets.map((ds,i)=>({...ds,borderColor:colors[i%colors.length],backgroundColor:colors[i%colors.length]+'33'}))},{scales:{y:{min:0}}});
+}
+
+// ── CHANGES ───────────────────────────────────────────────────────────────────
+window.exportChanges = function(fmt) {
+    // Same offsets currently selected in the Changes tab, so the export
+    // always matches what's on screen.
+    const vcOffset = document.getElementById('vcPrevOffset')?.value || 1;
+    const hvOffset = document.getElementById('hvPrevOffset')?.value || 1;
+    window.location.href = `/api/reporting/changes/export?vc_prev_offset=${vcOffset}&hv_prev_offset=${hvOffset}&format=${fmt}`;
+};
+
+async function loadChanges(){
+    const vcOffset=document.getElementById('vcPrevOffset')?.value||1;
+    const hvOffset=document.getElementById('hvPrevOffset')?.value||1;
+    ['changedTable','addedTable','removedTable'].forEach(id=>{
+        const el=document.getElementById(id);
+        if(el) el.innerHTML='<tr><td colspan="6" class="empty"><div class="spinner"></div> Loading…</td></tr>';
+    });
+    const d=await fetch(`/api/reporting/changes?vc_prev_offset=${vcOffset}&hv_prev_offset=${hvOffset}`).then(r=>r.json());
+    document.getElementById('changesRunInfo').innerHTML=`
+        <div class="stat-card primary"><div class="label">VMware comparing</div><div class="value" style="font-size:.9rem">${d.run_info.vmware_curr||'—'}</div><div class="sub">vs ${d.run_info.vmware_prev||'—'} (${vcOffset} run${vcOffset>1?'s':''} back)</div></div>
+        <div class="stat-card primary"><div class="label">Hyper-V comparing</div><div class="value" style="font-size:.9rem">${d.run_info.hyperv_curr||'—'}</div><div class="sub">vs ${d.run_info.hyperv_prev||'—'} (${hvOffset} run${hvOffset>1?'s':''} back)</div></div>
+        <div class="stat-card ${d.changed.length?'warning':'success'}"><div class="label">Changed</div><div class="value">${d.changed.length}</div></div>
+        <div class="stat-card ${d.added.length?'success':'primary'}"><div class="label">Added</div><div class="value">${d.added.length}</div></div>
+        <div class="stat-card ${d.removed.length?'danger':'primary'}"><div class="label">Removed</div><div class="value">${d.removed.length}</div></div>
+    `;
+    const vcSel=document.getElementById('vcPrevOffset');
+    const hvSel=document.getElementById('hvPrevOffset');
+    if(d.vc_run_options&&d.vc_run_options.length>1){
+        const sv=vcSel.value;
+        vcSel.innerHTML=d.vc_run_options.filter(r=>r.offset>0).map(r=>`<option value="${r.offset}" ${r.offset==sv?'selected':''}>${r.label}</option>`).join('');
+    }
+    if(d.hv_run_options&&d.hv_run_options.length>1){
+        const sv=hvSel.value;
+        hvSel.innerHTML=d.hv_run_options.filter(r=>r.offset>0).map(r=>`<option value="${r.offset}" ${r.offset==sv?'selected':''}>${r.label}</option>`).join('');
+    }
+    const vcCurrTime=d.run_info.vmware_curr||'—';
+    const hvCurrTime=d.run_info.hyperv_curr||'—';
+    const vcPrevTime=d.run_info.vmware_prev||'—';
+    const hvPrevTime=d.run_info.hyperv_prev||'—';
+
+    document.getElementById('addedCount').textContent=d.added.length;
+    document.getElementById('addedTable').innerHTML=d.added.length
+        ?d.added.map(v=>`<tr>
+            <td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td>
+            <td>${platBadge(v.platform)}</td>
+            <td>${v.cpu||'—'}</td><td>${fmtRam(v.ram_mb)}</td><td>${fmtDisk(v.total_disk_gb)}</td>
+            <td class="text-muted small">${v.platform==='VMware'?vcCurrTime:hvCurrTime}</td></tr>`).join('')
+        :'<tr><td colspan="6" class="empty">No VMs added</td></tr>';
+
+    document.getElementById('removedCount').textContent=d.removed.length;
+    document.getElementById('removedTable').innerHTML=d.removed.length
+        ?d.removed.map(v=>`<tr>
+            <td>${esc(v.vm_name)}</td>
+            <td>${platBadge(v.platform)}</td>
+            <td>${v.cpu||'—'}</td><td>${fmtRam(v.ram_mb)}</td><td>${fmtDisk(v.total_disk_gb)}</td>
+            <td class="text-muted small">${v.platform==='VMware'?vcPrevTime:hvPrevTime}</td></tr>`).join('')
+        :'<tr><td colspan="6" class="empty">No VMs removed</td></tr>';
+
+    document.getElementById('changedCount').textContent=d.changed.length;
+    document.getElementById('changedTable').innerHTML=d.changed.length
+        ?d.changed.map(v=>`<tr>
+            <td><a href="/vm/${esc(v.vm_name)}" class="text-primary">${esc(v.vm_name)}</a></td>
+            <td>${platBadge(v.platform)}</td>
+            <td class="text-muted small">${v.platform==='VMware'?vcCurrTime:hvCurrTime}</td>
+            <td>${Object.entries(v.changes).map(([f,c])=>`
+                <span class="change-tag">
+                    <strong>${FIELD_LABELS[f]||f}:</strong>
+                    <span class="old">${fmtFieldVal(f,c.from)}</span>
+                    <i class="bi bi-arrow-right" style="font-size:.65rem;color:var(--muted)"></i>
+                    <span class="new">${fmtFieldVal(f,c.to)}</span>
+                </span>`).join('')}
+            </td></tr>`).join('')
+        :'<tr><td colspan="4" class="empty">No changes detected ✅</td></tr>';
+}
+
+// ── INFRASTRUCTURE HISTORY ────────────────────────────────────────────────────
+async function loadEnvList(){
+    const d=await fetch('/api/reporting/environments_list').then(r=>r.json());
+    const sel=document.getElementById('infraEnv');
+    sel.innerHTML='<option value="">— Select environment —</option>';
+    d.forEach(e=>{
+        const o=document.createElement('option');
+        o.value=e.name; o.textContent=`${e.name} (${e.platform})`;
+        o.dataset.platform=e.platform;
+        sel.appendChild(o);
+    });
+    sel.onchange=()=>{
+        const opt=sel.options[sel.selectedIndex];
+        if(opt&&opt.dataset.platform) document.getElementById('infraPlatform').value=opt.dataset.platform;
+    };
+}
+
+// ── Sort state ────────────────────────────────────────────────────────────────
+let infraRuns    = [];
+let infraSortCol = null;
+let infraSortDir = 'desc';
+
+function sortInfraRuns(col){
+    if(infraSortCol===col){
+        infraSortDir=infraSortDir==='asc'?'desc':'asc';
+    } else {
+        infraSortCol=col;
+        infraSortDir='desc';
+    }
+    const colMap={cpu:'cpu_usage_percent',mem:'memory_usage_percent',stor:'storage_usage_percent'};
+    const field=colMap[col];
+    infraRuns=[...infraRuns].sort((a,b)=>{
+        const va=parseFloat(a[field])||0;
+        const vb=parseFloat(b[field])||0;
+        return infraSortDir==='asc'?va-vb:vb-va;
+    });
+    renderInfraTable(infraRuns);
+    updateInfraSortHeaders();
+}
+
+function updateInfraSortHeaders(){
+    ['cpu','mem','stor'].forEach(col=>{
+        const th=document.getElementById(`infra-th-${col}`);
+        if(!th) return;
+        const icon=infraSortCol===col?(infraSortDir==='asc'?' ▲':' ▼'):' ⇅';
+        th.querySelector('.sort-icon').textContent=icon;
+        th.classList.toggle('sort-active',infraSortCol===col);
+    });
+}
+
+function usageColor(pct){
+    const p=parseFloat(pct)||0;
+    return p>=90?'var(--danger)':p>=80?'var(--warning)':'inherit';
+}
+
+function renderInfraTable(runs){
+    document.getElementById('infraTable').innerHTML=runs.map(r=>`<tr>
+        <td style="white-space:nowrap">${r.run_timestamp?r.run_timestamp.slice(0,16):'—'}</td>
+        <td>${fmtNum(r.num_vms)}</td>
+        <td>${fmtNum(r.num_hosts)}</td>
+        <td>${fmtNum(r.num_clusters)}</td>
+        <td>${fmtNum(r.num_datastores)}</td>
+        <td style="font-weight:600;color:${usageColor(r.cpu_usage_percent)}">${fmtPct(r.cpu_usage_percent)}</td>
+        <td style="font-weight:600;color:${usageColor(r.memory_usage_percent)}">${fmtPct(r.memory_usage_percent)}</td>
+        <td style="font-weight:600;color:${usageColor(r.storage_usage_percent)}">${fmtPct(r.storage_usage_percent)}</td>
+        <td>${mhzToGhz(r.total_cpu_mhz)}</td>
+        <td>${mhzToGhz(r.used_cpu_mhz)}</td>
+        <td>${mhzToGhz(r.free_cpu_mhz)}</td>
+        <td>${fmtCores(r.total_cores)}</td>
+        <td>${fmtCores(r.used_cores)}</td>
+        <td>${fmtCores(r.free_cores)}</td>
+        <td>${gbToTb(r.total_memory_gb)}</td>
+        <td>${gbToTb(r.used_memory_gb)}</td>
+        <td>${gbToTb(r.free_memory_gb)}</td>
+        <td>${gbToTb(r.total_storage_gb)}</td>
+        <td>${gbToTb(r.used_storage_gb)}</td>
+        <td>${gbToTb(r.free_storage_gb)}</td>
+        <td>${fmtNum(r.total_cpu_vms)}</td>
+        <td>${gbToTb(r.total_memory_vms_gb)}</td>
+        <td>${gbToTb(r.total_disk_size_gb)}</td>
+        <td>${esc(r.Subscription_cpu_ratio||'—')}</td>
+        <td>${esc(r.Subscription_memory_ratio||'—')}</td>
+        <td>${esc(r.Subscription_storage_ratio||'—')}</td>
+    </tr>`).join('');
+}
+
+async function loadInfraHistory(){
+    const env      = document.getElementById('infraEnv').value;
+    const platform = document.getElementById('infraPlatform').value;
+    const period   = document.getElementById('infraPeriod').value;
+    if(!env){ alert('Please select an environment'); return; }
+
+    document.getElementById('infraKpis').innerHTML     = '<div class="empty"><div class="spinner"></div> Loading…</div>';
+    document.getElementById('infraAvgCards').innerHTML  = '';
+    document.getElementById('infraTable').innerHTML     = '<tr><td colspan="26" class="empty"><div class="spinner"></div></td></tr>';
+
+    // Reset sort state
+    infraSortCol=null; infraSortDir='desc';
+    updateInfraSortHeaders();
+
+    const d=await fetch(
+        `/api/reporting/infrastructure_history?env=${encodeURIComponent(env)}&platform=${encodeURIComponent(platform)}&period=${period}`
+    ).then(r=>r.json());
+
+    if(!d.runs||!d.runs.length){
+        document.getElementById('infraKpis').innerHTML    ='<div class="empty" style="grid-column:1/-1">No data found for this environment and period.</div>';
+        document.getElementById('infraAvgCards').innerHTML='';
+        document.getElementById('infraTable').innerHTML   ='<tr><td colspan="26" class="empty">No data</td></tr>';
+        return;
+    }
+
+    infraRuns = d.runs;
+    const runs   = d.runs;
+    const latest = runs[runs.length - 1];
+    const labels = runs.map(r=>r.run_timestamp?r.run_timestamp.slice(0,16):'');
+
+    // ── KPI cards (latest snapshot) ───────────────────────────────────────
+    document.getElementById('infraKpis').innerHTML=`
+        <div class="infra-kpi"><div class="k-label">VMs</div><div class="k-val">${fmtNum(latest.num_vms)}</div><div class="k-sub">Latest snapshot</div></div>
+        <div class="infra-kpi"><div class="k-label">Hosts</div><div class="k-val">${fmtNum(latest.num_hosts)}</div></div>
+        <div class="infra-kpi"><div class="k-label">Clusters</div><div class="k-val">${fmtNum(latest.num_clusters)}</div></div>
+        <div class="infra-kpi"><div class="k-label">Datastores</div><div class="k-val">${fmtNum(latest.num_datastores)}</div></div>
+        <div class="infra-kpi">
+            <div class="k-label">CPU Usage</div>
+            <div class="k-val" style="color:${parseFloat(latest.cpu_usage_percent)>80?'var(--danger)':'var(--text)'}">${fmtPct(latest.cpu_usage_percent)}</div>
+            <div class="k-sub">${mhzToGhz(latest.used_cpu_mhz)} / ${mhzToGhz(latest.total_cpu_mhz)}</div>
+        </div>
+        <div class="infra-kpi">
+            <div class="k-label">Memory Usage</div>
+            <div class="k-val" style="color:${parseFloat(latest.memory_usage_percent)>80?'var(--danger)':'var(--text)'}">${fmtPct(latest.memory_usage_percent)}</div>
+            <div class="k-sub">${gbToTb(latest.used_memory_gb)} / ${gbToTb(latest.total_memory_gb)}</div>
+        </div>
+        <div class="infra-kpi">
+            <div class="k-label">Storage Usage</div>
+            <div class="k-val" style="color:${parseFloat(latest.storage_usage_percent)>80?'var(--danger)':'var(--text)'}">${fmtPct(latest.storage_usage_percent)}</div>
+            <div class="k-sub">${gbToTb(latest.used_storage_gb)} / ${gbToTb(latest.total_storage_gb)}</div>
+        </div>
+        <div class="infra-kpi"><div class="k-label">CPU Ratio</div><div class="k-val">${esc(latest.Subscription_cpu_ratio||'—')}</div></div>
+        <div class="infra-kpi"><div class="k-label">Mem Ratio</div><div class="k-val">${esc(latest.Subscription_memory_ratio||'—')}</div></div>
+        <div class="infra-kpi"><div class="k-label">Stor Ratio</div><div class="k-val">${esc(latest.Subscription_storage_ratio||'—')}</div></div>
+    `;
+
+    // ── Period averages ───────────────────────────────────────────────────
+    const avg = arr => arr.reduce((s,v)=>s+(parseFloat(v)||0),0)/arr.length;
+
+    const avgCpu  = avg(runs.map(r=>r.cpu_usage_percent));
+    const avgMem  = avg(runs.map(r=>r.memory_usage_percent));
+    const avgStor = avg(runs.map(r=>r.storage_usage_percent));
+
+    const minCpu  = Math.min(...runs.map(r=>parseFloat(r.cpu_usage_percent)||0));
+    const maxCpu  = Math.max(...runs.map(r=>parseFloat(r.cpu_usage_percent)||0));
+    const minMem  = Math.min(...runs.map(r=>parseFloat(r.memory_usage_percent)||0));
+    const maxMem  = Math.max(...runs.map(r=>parseFloat(r.memory_usage_percent)||0));
+    const minStor = Math.min(...runs.map(r=>parseFloat(r.storage_usage_percent)||0));
+    const maxStor = Math.max(...runs.map(r=>parseFloat(r.storage_usage_percent)||0));
+
+    const avgUsedCpuMhz = avg(runs.map(r=>r.used_cpu_mhz));
+    const avgTotCpuMhz  = avg(runs.map(r=>r.total_cpu_mhz));
+    const avgUsedMemGb  = avg(runs.map(r=>r.used_memory_gb));
+    const avgTotMemGb   = avg(runs.map(r=>r.total_memory_gb));
+    const avgUsedStorGb = avg(runs.map(r=>r.used_storage_gb));
+    const avgTotStorGb  = avg(runs.map(r=>r.total_storage_gb));
+
+    const avgColor = pct => pct>=80?'var(--danger)':pct>=60?'var(--warning)':'var(--success)';
+
+    document.getElementById('infraAvgCards').innerHTML=`
+        <div class="infra-avg-section-title">
+            <i class="bi bi-calculator"></i>
+            Period Averages
+            <small style="font-size:.75rem;font-weight:400;color:var(--muted);margin-left:.5rem">
+                based on ${runs.length} data point${runs.length!==1?'s':''}
+            </small>
+        </div>
+        <div class="infra-avg-grid">
+            <div class="infra-avg-card">
+                <div class="k-label"><i class="bi bi-cpu me-1"></i>Avg CPU Usage</div>
+                <div class="k-val" style="color:${avgColor(avgCpu)}">${avgCpu.toFixed(1)}%</div>
+                <div class="k-sub">
+                    min ${minCpu.toFixed(1)}% · max ${maxCpu.toFixed(1)}%<br>
+                    avg used ${mhzToGhz(avgUsedCpuMhz)} / ${mhzToGhz(avgTotCpuMhz)}
+                </div>
+                <div class="infra-avg-bar">
+                    <div class="infra-avg-fill" style="width:${Math.min(avgCpu,100)}%;background:${avgColor(avgCpu)}"></div>
+                </div>
+            </div>
+            <div class="infra-avg-card">
+                <div class="k-label"><i class="bi bi-memory me-1"></i>Avg Memory Usage</div>
+                <div class="k-val" style="color:${avgColor(avgMem)}">${avgMem.toFixed(1)}%</div>
+                <div class="k-sub">
+                    min ${minMem.toFixed(1)}% · max ${maxMem.toFixed(1)}%<br>
+                    avg used ${gbToTb(avgUsedMemGb)} / ${gbToTb(avgTotMemGb)}
+                </div>
+                <div class="infra-avg-bar">
+                    <div class="infra-avg-fill" style="width:${Math.min(avgMem,100)}%;background:${avgColor(avgMem)}"></div>
+                </div>
+            </div>
+            <div class="infra-avg-card">
+                <div class="k-label"><i class="bi bi-hdd me-1"></i>Avg Storage Usage</div>
+                <div class="k-val" style="color:${avgColor(avgStor)}">${avgStor.toFixed(1)}%</div>
+                <div class="k-sub">
+                    min ${minStor.toFixed(1)}% · max ${maxStor.toFixed(1)}%<br>
+                    avg used ${gbToTb(avgUsedStorGb)} / ${gbToTb(avgTotStorGb)}
+                </div>
+                <div class="infra-avg-bar">
+                    <div class="infra-avg-fill" style="width:${Math.min(avgStor,100)}%;background:${avgColor(avgStor)}"></div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    // ── Charts (all units converted) ──────────────────────────────────────
+    const f = k => runs.map(r=>parseFloat(r[k])||0);
+
+    mkChart('infraCpuChart','line',{labels,datasets:[{label:'CPU %',data:f('cpu_usage_percent'),borderColor:'#3b82f6',backgroundColor:'#3b82f633',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+    mkChart('infraMemChart','line',{labels,datasets:[{label:'Memory %',data:f('memory_usage_percent'),borderColor:'#10b981',backgroundColor:'#10b98133',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+    mkChart('infraStorChart','line',{labels,datasets:[{label:'Storage %',data:f('storage_usage_percent'),borderColor:'#f59e0b',backgroundColor:'#f59e0b33',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+    mkChart('infraVmChart','line',{labels,datasets:[{label:'VM Count',data:f('num_vms'),borderColor:'#8b5cf6',backgroundColor:'#8b5cf633',fill:true,tension:.3}]},{scales:{y:{min:0}}});
+
+    // CPU MHz → GHz
+    const totCpuGhz  = runs.map(r=>(parseFloat(r.total_cpu_mhz )||0)/1000);
+    const usedCpuGhz = runs.map(r=>(parseFloat(r.used_cpu_mhz  )||0)/1000);
+    // Memory GB → TB
+    const totMemTb   = runs.map(r=>(parseFloat(r.total_memory_gb)||0)/1024);
+    const usedMemTb  = runs.map(r=>(parseFloat(r.used_memory_gb )||0)/1024);
+    // Storage GB → TB
+    const totStorTb  = runs.map(r=>(parseFloat(r.total_storage_gb)||0)/1024);
+    const usedStorTb = runs.map(r=>(parseFloat(r.used_storage_gb )||0)/1024);
+
+    mkChart('infraCpuMhzChart','line',{labels,datasets:[
+        {label:'Total CPU (GHz)', data:totCpuGhz,  borderColor:'#e5e7eb',backgroundColor:'#e5e7eb33',fill:true,tension:.3},
+        {label:'Used CPU (GHz)',  data:usedCpuGhz, borderColor:'#3b82f6',backgroundColor:'#3b82f633',fill:true,tension:.3}
+    ]},{scales:{y:{min:0}}});
+    mkChart('infraMemGbChart','line',{labels,datasets:[
+        {label:'Total Mem (TB)', data:totMemTb,  borderColor:'#e5e7eb',backgroundColor:'#e5e7eb33',fill:true,tension:.3},
+        {label:'Used Mem (TB)',  data:usedMemTb, borderColor:'#10b981',backgroundColor:'#10b98133',fill:true,tension:.3}
+    ]},{scales:{y:{min:0}}});
+    mkChart('infraStorGbChart','line',{labels,datasets:[
+        {label:'Total Stor (TB)', data:totStorTb,  borderColor:'#e5e7eb',backgroundColor:'#e5e7eb33',fill:true,tension:.3},
+        {label:'Used Stor (TB)',  data:usedStorTb, borderColor:'#f59e0b',backgroundColor:'#f59e0b33',fill:true,tension:.3}
+    ]},{scales:{y:{min:0}}});
+
+    // ── Render table ──────────────────────────────────────────────────────
+    renderInfraTable(infraRuns);
+    updateInfraSortHeaders();
+}
+
+// ── TRENDS ────────────────────────────────────────────────────────────────────
+async function loadClustersList(selectId){
+    const d=await fetch('/api/reporting/clusters_list').then(r=>r.json());
+    const sel=document.getElementById(selectId);
+    const first=sel.options[0];
+    sel.innerHTML='';sel.appendChild(first);
+    d.forEach(c=>{const o=document.createElement('option');o.value=c.name;o.textContent=`${c.name} (${c.platform})`;sel.appendChild(o);});
+}
+async function loadTrends(){
+    const cluster=document.getElementById('trendCluster').value;
+    const runs=document.getElementById('trendRuns').value;
+    if(!cluster){
+        const d=await fetch(`/api/reporting/all_clusters_trends?runs=${runs}`).then(r=>r.json());
+        if(d.error) return;
+        mkChart('cpuTrendChart','line',{labels:d.timestamps,datasets:d.cpu_datasets},{scales:{y:{max:100,min:0}}});
+        mkChart('memoryTrendChart','line',{labels:d.timestamps,datasets:d.memory_datasets},{scales:{y:{max:100,min:0}}});
+        mkChart('storageTrendChart','line',{labels:d.timestamps,datasets:d.storage_datasets},{scales:{y:{max:100,min:0}}});
+    } else {
+        const d=await fetch(`/api/reporting/cluster_trends?cluster=${encodeURIComponent(cluster)}&runs=${runs}`).then(r=>r.json());
+        if(d.error){alert(d.error);return;}
+        mkChart('cpuTrendChart','line',{labels:d.timestamps,datasets:[{label:'CPU %',data:d.cpu,borderColor:'#3b82f6',backgroundColor:'#3b82f633',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+        mkChart('memoryTrendChart','line',{labels:d.timestamps,datasets:[{label:'Memory %',data:d.memory,borderColor:'#10b981',backgroundColor:'#10b98133',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+        mkChart('storageTrendChart','line',{labels:d.timestamps,datasets:[{label:'Storage %',data:d.storage,borderColor:'#f59e0b',backgroundColor:'#f59e0b33',fill:true,tension:.3}]},{scales:{y:{max:100,min:0}}});
+    }
+}
+
+// ── COMPARE PERIODS ───────────────────────────────────────────────────────────
+function setDefaultDates(){
+    const today=new Date(); const fmt=d=>d.toISOString().split('T')[0];
+    const e2=new Date(today);e2.setDate(today.getDate()-1);
+    const s2=new Date(e2);  s2.setDate(e2.getDate()-29);
+    const e1=new Date(s2);  e1.setDate(s2.getDate()-1);
+    const s1=new Date(e1);  s1.setDate(e1.getDate()-29);
+    document.getElementById('start1').value=fmt(s1);
+    document.getElementById('end1').value=fmt(e1);
+    document.getElementById('start2').value=fmt(s2);
+    document.getElementById('end2').value=fmt(e2);
+}
+
+async function loadClusterComparison(){
+    const cluster=document.getElementById('compareCluster').value;
+    if(!cluster){alert('Please select a cluster');return;}
+    const [s1,e1,s2,e2]=['start1','end1','start2','end2'].map(id=>document.getElementById(id).value);
+    if(!s1||!e1||!s2||!e2){alert('Please fill all date fields');return;}
+    document.getElementById('comparisonResult').innerHTML='<div class="empty"><div class="spinner"></div> Loading…</div>';
+    try{
+        const d=await fetch(`/api/reporting/compare_cluster?cluster=${encodeURIComponent(cluster)}&start1=${s1}&end1=${e1}&start2=${s2}&end2=${e2}`).then(r=>r.json());
+        if(d.error) throw new Error(d.error);
+        renderComparison(d);
+    }catch(err){
+        document.getElementById('comparisonResult').innerHTML=`<div class="empty" style="color:var(--danger)">Error: ${esc(err.message)}</div>`;
+    }
+}
+
+function renderComparison(data){
+    const p1=data.period1, p2=data.period2, d=data.deltas||{};
+    const getM=(p,k)=>{const v=p[k];return(v&&typeof v==='object'&&'avg'in v)?v:{avg:v||0,min:v||0,max:v||0,trend:0}};
+    const trendIcon=s=>s>0.1?'📈 increasing':s<-0.1?'📉 decreasing':'➡ stable';
+    const mRow=(name,m1,m2,dv)=>`<tr>
+        <td><strong>${name}</strong></td>
+        <td>${m1.avg}%<br><small>min ${m1.min}% / max ${m1.max}%<br>${trendIcon(m1.trend)}</small></td>
+        <td>${m2.avg}%<br><small>min ${m2.min}% / max ${m2.max}%<br>${trendIcon(m2.trend)}</small></td>
+        <td>${arrow(dv)}</td></tr>`;
+
+    const detailTbl=(details,title)=>{
+        if(!details||!details.length) return '';
+        return `<details style="margin-top:.75rem">
+            <summary style="cursor:pointer;font-size:.82rem;color:var(--primary);font-weight:500">
+                📋 ${title} — ${details.length} data points
+            </summary>
+            <table class="detail-tbl" style="margin-top:.5rem">
+                <thead><tr><th>Timestamp</th><th>CPU %</th><th>Memory %</th><th>Storage %</th><th>VM Count</th></tr></thead>
+                <tbody>${details.map(r=>`<tr>
+                    <td>${r.timestamp}</td>
+                    <td>${r.cpu}%</td><td>${r.memory}%</td><td>${r.storage}%</td>
+                    <td>${r.vm_count}</td>
+                </tr>`).join('')}</tbody>
+            </table>
+        </details>`;
+    };
+
+    document.getElementById('comparisonResult').innerHTML=`
+        <h4 style="margin-bottom:1rem">${platBadge(data.platform)} ${esc(data.cluster)}</h4>
+        <table class="cmp-table">
+            <thead><tr>
+                <th>Metric</th>
+                <th>${p1.start} → ${p1.end}<br><small>${p1.data_points} data points</small></th>
+                <th>${p2.start} → ${p2.end}<br><small>${p2.data_points} data points</small></th>
+                <th>Change Δ%</th>
+            </tr></thead>
+            <tbody>
+                ${mRow('CPU',getM(p1,'cpu'),getM(p2,'cpu'),d.cpu)}
+                ${mRow('Memory',getM(p1,'memory'),getM(p2,'memory'),d.memory)}
+                ${mRow('Storage',getM(p1,'storage'),getM(p2,'storage'),d.storage)}
+                <tr>
+                    <td><strong>VM Count</strong></td>
+                    <td>avg ${p1.vm_count}<br><small>start ${p1.vm_count_start} → end ${p1.vm_count_end}</small></td>
+                    <td>avg ${p2.vm_count}<br><small>start ${p2.vm_count_start} → end ${p2.vm_count_end}</small></td>
+                    <td>${arrow(d.vm_count)}</td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="two-col">
+            <div>${detailTbl(p1.details,'Period 1 data points')}</div>
+            <div>${detailTbl(p2.details,'Period 2 data points')}</div>
+        </div>
+        <div style="background:var(--bg);padding:.75rem 1rem;border-radius:.5rem;font-size:.8rem;color:var(--muted);margin-top:.75rem">
+            ▼ negative delta = improvement (lower usage) · ▲ positive delta = higher usage
+        </div>`;
+}
+
+function applyComparePreset(){
+    const preset=document.getElementById('comparePreset').value;
+    const today=new Date(); const fmt=d=>d.toISOString().split('T')[0];
+    let s1,e1,s2,e2;
+    if(preset==='lastWeek'){
+        const dow=today.getDay()||7;
+        const mon2=new Date(today);mon2.setDate(today.getDate()-(dow-1));
+        const sun2=new Date(mon2);sun2.setDate(mon2.getDate()+6);
+        const mon1=new Date(mon2);mon1.setDate(mon2.getDate()-7);
+        const sun1=new Date(mon1);sun1.setDate(mon1.getDate()+6);
+        s1=fmt(mon1);e1=fmt(sun1);s2=fmt(mon2);e2=fmt(sun2);
+    }else if(preset==='last2Weeks'){
+        const e2d=new Date(today);const s2d=new Date(today);s2d.setDate(today.getDate()-13);
+        const e1d=new Date(s2d);e1d.setDate(s2d.getDate()-1);
+        const s1d=new Date(e1d);s1d.setDate(e1d.getDate()-13);
+        s1=fmt(s1d);e1=fmt(e1d);s2=fmt(s2d);e2=fmt(e2d);
+    }else if(preset==='last3Weeks'){
+        const e2d=new Date(today);const s2d=new Date(today);s2d.setDate(today.getDate()-20);
+        const e1d=new Date(s2d);e1d.setDate(s2d.getDate()-1);
+        const s1d=new Date(e1d);s1d.setDate(e1d.getDate()-20);
+        s1=fmt(s1d);e1=fmt(e1d);s2=fmt(s2d);e2=fmt(e2d);
+    }else if(preset==='lastMonth'){
+        const lmS=new Date(today.getFullYear(),today.getMonth()-1,1);
+        const lmE=new Date(today.getFullYear(),today.getMonth(),0);
+        const pmS=new Date(today.getFullYear(),today.getMonth()-2,1);
+        const pmE=new Date(today.getFullYear(),today.getMonth()-1,0);
+        s1=fmt(pmS);e1=fmt(pmE);s2=fmt(lmS);e2=fmt(lmE);
+    }else if(preset==='last30vsPrevious30'){
+        const e2d=new Date();const s2d=new Date(e2d.getTime()-30*86400000);
+        const e1d=new Date(s2d.getTime()-1);const s1d=new Date(e1d.getTime()-30*86400000);
+        s1=fmt(s1d);e1=fmt(e1d);s2=fmt(s2d);e2=fmt(e2d);
+    }else if(preset==='thisMonthLastYear'){
+        const tmS=new Date(today.getFullYear(),today.getMonth(),1);
+        const tmE=new Date(today.getFullYear(),today.getMonth()+1,0);
+        const lyS=new Date(today.getFullYear()-1,today.getMonth(),1);
+        const lyE=new Date(today.getFullYear()-1,today.getMonth()+1,0);
+        s1=fmt(lyS);e1=fmt(lyE);s2=fmt(tmS);e2=fmt(tmE);
+    }else return;
+    document.getElementById('start1').value=s1;
+    document.getElementById('end1').value=e1;
+    document.getElementById('start2').value=s2;
+    document.getElementById('end2').value=e2;
+    if(document.getElementById('compareCluster').value) loadClusterComparison();
+}
+
+// ── EXPORT ────────────────────────────────────────────────────────────────────
+function exportCurrentTab(){
+    const active=document.querySelector('.tab-btn.active')?.dataset.tab;
+    if(active==='overview'&&overviewCSVData){
+        let csv='Cluster,CPU %,Memory %,Storage %\n';
+        overviewCSVData.labels.forEach((l,i)=>csv+=`${l},${overviewCSVData.cpu_data[i]},${overviewCSVData.memory_data[i]},${overviewCSVData.storage_data[i]}\n`);
+        dlCSV(csv,'overview_report.csv');
+    }else if(active==='vms'&&vmAnalyticsData){
+        let csv='VM Name,Platform,OS,CPU,RAM GB,Disk GB,Power,IP\n';
+        vmAnalyticsData.powered_off.forEach(v=>csv+=`${v.vm_name},${v.platform},${v.os||''},${v.cpu||''},${(v.ram_mb/1024).toFixed(1)},${parseFloat(v.total_disk_gb||0).toFixed(1)},Off,${v.ip_address||''}\n`);
+        dlCSV(csv,'vm_analytics.csv');
+    }else if(active==='infra'){
+        exportTableCSV('infraTable','infra_history');
+    }
+}
+function exportTableCSV(tbodyId,filename){
+    const tbody=document.getElementById(tbodyId);
+    if(!tbody) return;
+    const thead=tbody.closest('table').querySelector('thead tr');
+    const headers=[...thead.querySelectorAll('th')].map(th=>th.textContent.trim()).join(',');
+    const lines=[...tbody.querySelectorAll('tr')].map(tr=>[...tr.querySelectorAll('td')].map(td=>'"'+td.textContent.trim().replace(/"/g,'""')+'"').join(','));
+    dlCSV(headers+'\n'+lines.join('\n'),filename+'.csv');
+}
+function dlCSV(content,name){
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob(['\ufeff'+content],{type:'text/csv'}));
+    a.download=name;a.click();URL.revokeObjectURL(a.href);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+loadOverview();
+</script>
+</body>
+</html>

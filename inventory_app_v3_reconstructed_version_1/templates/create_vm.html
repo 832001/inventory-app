@@ -1,0 +1,2324 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- ══════════════════════════════════════════════════
+     PAGE HEADER
+══════════════════════════════════════════════════ -->
+<div class="vmb-header mb-4">
+  <div class="vmb-header-left">
+    <div class="vmb-title">
+      <i class="bi bi-cpu-fill"></i>
+      VM<span>BuiLDeR</span>
+    </div>
+    <div class="vmb-subtitle">
+      Infrastructure auto-loaded from live vCenter inventory &mdash; all fields editable
+    </div>
+  </div>
+  <div class="vmb-header-badges">
+    <span class="vmb-badge vmb-badge-ansible">
+      <i class="bi bi-gear-fill"></i> Ansible
+    </span>
+    <span class="vmb-badge vmb-badge-vsphere">
+      <i class="bi bi-server"></i> vSphere
+    </span>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     CSV BULK IMPORT
+══════════════════════════════════════════════════ -->
+<div class="vmb-csv-bar mb-4">
+  <div class="vmb-csv-inner">
+    <i class="bi bi-file-earmark-spreadsheet text-muted me-2"></i>
+    <span class="vmb-csv-label">BULK CSV</span>
+    <input type="file" id="csv_file" accept=".csv" class="vmb-csv-input">
+    <span class="text-muted" style="font-size:12px;">
+      Optional — bypasses form.
+      <a class="vmb-link" data-bs-toggle="collapse" href="#csvHeaders">View headers ▾</a>
+    </span>
+  </div>
+  <div class="collapse ps-4 pt-2" id="csvHeaders">
+    <code class="vmb-code">vcenter_hostname, vcenter_username, vcenter_password, datacenter_name,
+cluster_name, template_name, datastore_name, network_name, vm_name, vm_hostname,
+vm_folder, vm_ip, vm_netmask, vm_gateway, vm_dns, cpu, ram, disk_size, disk_type, user_data</code>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     VM ROWS
+══════════════════════════════════════════════════ -->
+<div id="vm-rows"></div>
+
+<div class="d-flex gap-2 mb-5">
+  <button class="vmb-btn vmb-btn-outline" onclick="addRow()">
+    <i class="bi bi-plus-circle-fill me-1"></i>Add Another VM
+  </button>
+  <button class="vmb-btn vmb-btn-primary" id="review-btn" onclick="openPreview()">
+    <i class="bi bi-eye-fill me-1"></i>Review &amp; Provision
+  </button>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     PREVIEW SECTION
+══════════════════════════════════════════════════ -->
+<div id="preview-section" style="display:none;" class="mb-5">
+  <div class="vmb-panel">
+    <div class="vmb-panel-header">
+      <span><i class="bi bi-clipboard2-check-fill me-2"></i>Review — Ready to Provision</span>
+      <button class="vmb-btn vmb-btn-sm vmb-btn-ghost" onclick="closePreview()">
+        <i class="bi bi-x-lg"></i> Edit
+      </button>
+    </div>
+    <div class="vmb-panel-body">
+      <div class="vmb-stat-row mb-4" id="preview-stats"></div>
+      <div class="row g-3" id="preview-cards"></div>
+    </div>
+    <div class="vmb-panel-footer">
+      <button class="vmb-btn vmb-btn-success" onclick="submitForm()">
+        <i class="bi bi-rocket-takeoff-fill me-1"></i>Confirm &amp; Provision
+      </button>
+      <button class="vmb-btn vmb-btn-outline ms-2" onclick="closePreview()">
+        <i class="bi bi-pencil-fill me-1"></i>Go Back &amp; Edit
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     STATUS PANEL
+══════════════════════════════════════════════════ -->
+<div id="status-panel" style="display:none;" class="mb-5">
+  <div class="vmb-panel">
+    <div class="vmb-panel-header">
+      <span>
+        <span class="spinner-border spinner-border-sm me-2" id="status-spinner"></span>
+        <span id="status-title">Initializing…</span>
+      </span>
+    </div>
+    <div class="vmb-panel-body">
+      <div id="vm-status-grid"></div>
+      <div id="summary-bar" class="mt-3" style="display:none;"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     STYLES
+══════════════════════════════════════════════════ -->
+<style>
+/* ── Design tokens matching your project navbar ── */
+:root {
+  --vmb-dark:    #1f2937;
+  --vmb-darker:  #111827;
+  --vmb-blue:    #2563eb;
+  --vmb-blue-lt: #dbeafe;
+  --vmb-green:   #16a34a;
+  --vmb-border:  #e5e7eb;
+  --vmb-bg:      #f9fafb;
+  --vmb-text:    #111827;
+  --vmb-muted:   #6b7280;
+  --vmb-radius:  8px;
+}
+
+/* ── Page header ── */
+.vmb-header {
+  display: flex; align-items: flex-start;
+  justify-content: space-between; flex-wrap: wrap; gap: 12px;
+}
+.vmb-title {
+  font-size: 22px; font-weight: 800; color: var(--vmb-dark);
+  letter-spacing: -.4px;
+}
+.vmb-title i { color: var(--vmb-blue); margin-right: 8px; }
+.vmb-title span { color: var(--vmb-blue); }
+.vmb-subtitle { font-size: 12px; color: var(--vmb-muted); margin-top: 2px; }
+.vmb-header-badges { display: flex; gap: 8px; align-items: center; }
+.vmb-badge {
+  font-size: 11px; font-weight: 600; padding: 5px 12px;
+  border-radius: 20px; display: inline-flex; align-items: center; gap: 5px;
+}
+.vmb-badge-ansible { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+.vmb-badge-vsphere { background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+
+/* ── CSV bar ── */
+.vmb-csv-bar {
+  background: white; border: 1px solid var(--vmb-border);
+  border-radius: var(--vmb-radius);
+  padding: 10px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05);
+}
+.vmb-csv-inner { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.vmb-csv-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .1em;
+  color: var(--vmb-muted); white-space: nowrap;
+}
+.vmb-csv-input {
+  font-size: 12px;
+  border: 1px solid var(--vmb-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--vmb-bg);
+}
+.vmb-code {
+  font-size: 11px; color: #374151;
+  background: #f3f4f6; border-radius: 6px;
+  padding: 8px 12px; display: block;
+  line-height: 1.8;
+}
+.vmb-link { color: var(--vmb-blue); text-decoration: none; font-weight: 500; }
+.vmb-link:hover { text-decoration: underline; }
+
+/* ── VM card ── */
+.vmb-vm-card {
+  background: white;
+  border: 1px solid var(--vmb-border);
+  border-radius: var(--vmb-radius);
+  margin-bottom: 24px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  overflow: hidden;
+  transition: box-shadow .2s;
+}
+.vmb-vm-card:focus-within {
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12), 0 2px 8px rgba(0,0,0,.08);
+}
+
+/* ── VM card header (matches navbar) ── */
+.vmb-card-head {
+  background: linear-gradient(90deg, var(--vmb-darker), var(--vmb-dark));
+  color: white;
+  padding: 10px 18px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.vmb-card-title {
+  font-size: 13px; font-weight: 700; letter-spacing: .02em;
+  display: flex; align-items: center; gap: 8px;
+}
+.vmb-card-num {
+  background: rgba(255,255,255,.15);
+  border: 1px solid rgba(255,255,255,.2);
+  border-radius: 20px;
+  font-size: 11px; padding: 1px 10px;
+}
+
+/* ── Sections inside card ── */
+.vmb-section {
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid #f3f4f6;
+}
+.vmb-section:last-child { border-bottom: none; padding-bottom: 16px; }
+.vmb-section-title {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .12em; color: var(--vmb-muted);
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 7px;
+}
+.vmb-section-title::after {
+  content: ''; flex: 1; height: 1px; background: #f0f0f0;
+}
+
+/* ── vCenter tile ── */
+.vmb-vc-tile {
+  background: var(--vmb-bg);
+  border: 1px solid var(--vmb-border);
+  border-radius: 6px;
+  padding: 12px 16px;
+}
+
+/* ── Field labels ── */
+.vmb-lbl {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: #374151;
+  margin-bottom: 4px; display: block;
+}
+.vmb-lbl i { margin-right: 4px; }
+
+/* ── Resource hint chips ── */
+.vmb-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 20px; margin: 1px;
+}
+.chip-ok   { background: #d1fae5; color: #065f46; }
+.chip-warn { background: #fef3c7; color: #92400e; }
+.chip-bad  { background: #fee2e2; color: #991b1b; }
+.chip-info { background: #dbeafe; color: #1e40af; }
+.chip-note { background: #f3f4f6; color: #4b5563; }
+
+.vmb-hint {
+  font-size: 10px; color: var(--vmb-muted);
+  margin-top: 4px; min-height: 18px; line-height: 1.5;
+}
+
+/* ── Form controls ── */
+.form-control, .form-select {
+  font-size: 13px;
+  border-color: #d1d5db;
+}
+.form-control:focus, .form-select:focus {
+  border-color: var(--vmb-blue);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+.form-select:disabled {
+  background-color: #f9fafb;
+  color: #9ca3af;
+  cursor: not-allowed;
+}
+
+
+/* ── Hypervisor / OS type selector ── */
+.hv-selector {
+  display: flex; gap: 10px; flex-wrap: wrap;
+}
+.hv-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 10px 20px; min-width: 155px;
+  border: 2px solid #e5e7eb; border-radius: 10px;
+  background: white; cursor: pointer; font-family: inherit;
+  transition: all .15s;
+}
+.hv-btn i    { font-size: 20px; color: #6b7280; }
+.hv-btn span { font-size: 13px; font-weight: 700; color: #374151; }
+.hv-btn small{ font-size: 10px; color: #9ca3af; }
+.hv-btn:hover            { border-color: #2563eb; }
+.hv-btn.active           { border-color: #2563eb; background: #eff6ff; }
+.hv-btn.active i         { color: #2563eb; }
+.hv-btn.active span      { color: #1d4ed8; }
+
+/* ══════════════════════════════════════════
+   PAAS PLATFORM CONFIGURATOR
+══════════════════════════════════════════ */
+
+/* OS selector row */
+.paas-os-row {
+  display: flex; gap: 10px; margin-bottom: 16px;
+}
+.paas-os-btn {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px; padding: 10px 24px;
+  border: 2px solid #e5e7eb; border-radius: 10px;
+  background: white; cursor: pointer;
+  transition: all .15s; font-family: inherit;
+  min-width: 130px;
+}
+.paas-os-btn i    { font-size: 20px; color: #6b7280; }
+.paas-os-btn span { font-size: 13px; font-weight: 700; color: #374151; }
+.paas-os-btn small{ font-size: 10px; color: #9ca3af; }
+.paas-os-btn:hover { border-color: #2563eb; }
+.paas-os-btn.active {
+  border-color: #2563eb; background: #eff6ff;
+}
+.paas-os-btn.active i    { color: #2563eb; }
+.paas-os-btn.active span { color: #1d4ed8; }
+
+/* Category label */
+.paas-category {
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; color: #6b7280;
+  margin: 12px 0 6px;
+}
+
+/* Tile grid */
+.paas-tile-row {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px;
+}
+
+/* Individual tile */
+.paas-tile {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 3px; padding: 10px 14px;
+  border: 1px solid #e5e7eb; border-radius: 8px;
+  background: #f9fafb; cursor: pointer;
+  transition: all .15s; min-width: 90px;
+  user-select: none; position: relative;
+}
+.paas-tile:hover { border-color: #2563eb; background: #eff6ff; }
+.paas-tile input[type=checkbox] {
+  position: absolute; top: 6px; right: 6px;
+  width: 14px; height: 14px; cursor: pointer;
+  accent-color: #2563eb;
+}
+.paas-tile i    { font-size: 18px; color: #6b7280; }
+.paas-tile span { font-size: 12px; font-weight: 600; color: #374151; }
+.paas-tile small{ font-size: 10px; color: #9ca3af; }
+
+/* Selected tile */
+.paas-tile:has(input:checked) {
+  border-color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+}
+.paas-tile:has(input:checked) i    { color: #2563eb; }
+.paas-tile:has(input:checked) span { color: #1d4ed8; }
+
+/* Bundle tile — distinct color */
+.paas-tile-bundle { border-color: #d8b4fe; background: #faf5ff; }
+.paas-tile-bundle:hover { border-color: #7c3aed; background: #f3e8ff; }
+.paas-tile-bundle:has(input:checked) {
+  border-color: #7c3aed; background: #f3e8ff;
+  box-shadow: 0 0 0 2px rgba(124,58,237,.15);
+}
+.paas-tile-bundle:has(input:checked) i    { color: #7c3aed; }
+.paas-tile-bundle:has(input:checked) span { color: #6d28d9; }
+
+/* Generated script area */
+.paas-script-wrap {
+  margin-top: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.paas-script-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px;
+  background: #1e1e2e;
+  color: #89dceb;
+  font-size: 11px; font-weight: 600;
+}
+.paas-script-ta {
+  width: 100%; padding: 12px;
+  background: #1e1e2e; color: #cdd6f4;
+  border: none; outline: none;
+  font-family: 'Courier New', monospace;
+  font-size: 11px; line-height: 1.6;
+  resize: vertical;
+}
+.paas-script-ta[readonly] { cursor: default; }
+.paas-edit-btn {
+  background: rgba(255,255,255,.1); color: #a6e3a1;
+  border: 1px solid rgba(166,227,161,.3); border-radius: 4px;
+  font-size: 10px; padding: 2px 8px; cursor: pointer;
+  font-family: inherit; transition: background .15s;
+}
+.paas-edit-btn:hover { background: rgba(255,255,255,.2); }
+.paas-clear-btn {
+  background: rgba(239,68,68,.15); color: #f38ba8;
+  border: 1px solid rgba(243,139,168,.3); border-radius: 4px;
+  font-size: 10px; padding: 2px 8px; cursor: pointer;
+  font-family: inherit; transition: background .15s;
+}
+.paas-clear-btn:hover { background: rgba(239,68,68,.25); }
+.paas-tag {
+  font-size: 10px; padding: 2px 8px; border-radius: 20px;
+  font-weight: 600;
+}
+.paas-tag-linux   { background: rgba(166,227,161,.2); color: #a6e3a1; }
+.paas-tag-windows { background: rgba(137,220,235,.2); color: #89dceb; }
+
+/* Empty state */
+.paas-empty {
+  text-align: center; padding: 20px 10px;
+  color: #9ca3af; font-size: 12px;
+}
+
+/* ── User data ── */
+.vmb-userdata {
+  background: #faf5ff;
+  border-left: 3px solid #7c3aed;
+  border-radius: 0 6px 6px 0;
+  padding: 12px 16px;
+}
+.vmb-userdata textarea {
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border: 1px solid #374151;
+  border-radius: 6px;
+  resize: vertical;
+}
+.vmb-userdata textarea:focus {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124,58,237,.15);
+  outline: none;
+}
+
+/* ── Buttons ── */
+.vmb-btn {
+  font-size: 13px; font-weight: 600;
+  padding: 8px 20px; border-radius: 6px;
+  border: none; cursor: pointer;
+  display: inline-flex; align-items: center;
+  transition: all .15s;
+}
+.vmb-btn-primary  { background: var(--vmb-blue); color: white; }
+.vmb-btn-primary:hover  { background: #1d4ed8; box-shadow: 0 2px 8px rgba(37,99,235,.35); }
+.vmb-btn-success  { background: #16a34a; color: white; }
+.vmb-btn-success:hover  { background: #15803d; }
+.vmb-btn-outline  { background: white; color: var(--vmb-dark); border: 1px solid #d1d5db; }
+.vmb-btn-outline:hover  { border-color: var(--vmb-blue); color: var(--vmb-blue); }
+.vmb-btn-ghost    { background: rgba(255,255,255,.1); color: white; border: 1px solid rgba(255,255,255,.2); }
+.vmb-btn-ghost:hover { background: rgba(255,255,255,.2); }
+.vmb-btn-danger   { background: #dc2626; color: white; border: none; }
+.vmb-btn-danger:hover { background: #b91c1c; }
+.vmb-btn-sm { padding: 4px 12px; font-size: 12px; }
+.vmb-btn:disabled { opacity: .55; cursor: not-allowed; }
+
+/* ── Panel (preview + status) ── */
+.vmb-panel {
+  background: white;
+  border: 1px solid var(--vmb-border);
+  border-radius: var(--vmb-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.vmb-panel-header {
+  background: linear-gradient(90deg, var(--vmb-darker), var(--vmb-dark));
+  color: white;
+  padding: 14px 20px;
+  font-size: 14px; font-weight: 700;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.vmb-panel-body { padding: 20px; }
+.vmb-panel-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--vmb-border);
+  background: var(--vmb-bg);
+}
+
+/* ── Stat row in preview ── */
+.vmb-stat-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.vmb-stat {
+  background: var(--vmb-blue-lt);
+  color: #1e40af;
+  border-radius: 20px;
+  padding: 6px 16px;
+  font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+
+/* ── Preview VM cards ── */
+.vmb-preview-card {
+  border: 1px solid var(--vmb-border);
+  border-top: 3px solid var(--vmb-blue);
+  border-radius: var(--vmb-radius);
+  overflow: hidden;
+  height: 100%;
+}
+.vmb-preview-head {
+  background: var(--vmb-bg);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--vmb-border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.vmb-preview-title { font-size: 13px; font-weight: 700; color: var(--vmb-blue); }
+.vmb-preview-body  { padding: 12px 14px; font-size: 12px; }
+.vmb-preview-sec {
+  font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--vmb-muted);
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 3px; margin: 10px 0 6px;
+}
+.vmb-preview-lbl { font-size: 10px; color: var(--vmb-muted); }
+.vmb-preview-val  { font-size: 12px; font-weight: 600; word-break: break-all; }
+
+/* ── Status cards ── */
+.vmb-status-card { border-radius: 6px; border: 1px solid var(--vmb-border); margin-bottom: 8px; overflow: hidden; }
+.vmb-status-card.running { border-left: 4px solid #0ea5e9; }
+.vmb-status-card.success { border-left: 4px solid #16a34a; }
+.vmb-status-card.failed  { border-left: 4px solid #dc2626; }
+.vmb-status-card.pending { border-left: 4px solid #9ca3af; }
+.vmb-log pre {
+  font-size: 11px; background: #1e1e2e; color: #cdd6f4;
+  border-radius: 4px; padding: 10px; max-height: 260px;
+  overflow-y: auto; white-space: pre-wrap; word-break: break-all; margin: 0;
+}
+.log-ok   { color: #a6e3a1; }
+.log-fail { color: #f38ba8; }
+.log-info { color: #89dceb; }
+.progress { height: 3px; border-radius: 2px; background: #e5e7eb; }
+</style>
+
+<!-- ══════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════ -->
+<script>
+'use strict';
+
+const _cache  = {};
+let rowCount  = 0;
+
+const _urlParams  = new URLSearchParams(window.location.search);
+const _urlVcenter = _urlParams.get('vcenter')    || '';
+const _urlVcId    = _urlParams.get('vcenter_id') || '';
+
+// ══════════════════════════════
+//  ROW MANAGEMENT
+// ══════════════════════════════
+function addRow() {
+  rowCount++;
+  const uid = rowCount;
+  _cache[uid] = { vcId:null, clusters:[], datastores:[], templates:[] };
+
+  const div = document.createElement('div');
+  div.className = 'vmb-vm-card';
+  div.dataset.uid = uid;
+  div.innerHTML = buildRow(uid);
+
+  document.getElementById('vm-rows').appendChild(div);
+  reindex();
+  loadVcenters(uid);
+}
+
+function removeRow(uid) {
+  document.querySelector(`.vmb-vm-card[data-uid="${uid}"]`)?.remove();
+  delete _cache[uid];
+  reindex();
+}
+
+function reindex() {
+  document.querySelectorAll('#vm-rows .vmb-vm-card').forEach((c, i) => {
+    const n = c.querySelector('.vmb-num');
+    if (n) n.textContent = i + 1;
+  });
+}
+
+// ══════════════════════════════
+//  ROW HTML
+// ══════════════════════════════
+function buildRow(uid) { return `
+
+  <!-- Header -->
+  <div class="vmb-card-head">
+    <div class="vmb-card-title">
+      <i class="bi bi-server"></i>
+      Virtual Machine
+      <span class="vmb-card-num">#<span class="vmb-num"></span></span>
+    </div>
+    <button class="vmb-btn vmb-btn-sm vmb-btn-danger"
+            onclick="removeRow(${uid})">
+      <i class="bi bi-trash me-1"></i>Remove
+    </button>
+  </div>
+
+  <!-- § 0 — Hypervisor + OS Type ─────────────────────────── -->
+  <div class="vmb-section" style="background:#f8faff;">
+    <div class="vmb-section-title">
+      <i class="bi bi-sliders2 text-primary"></i>Platform Selection
+    </div>
+    <div class="row g-3 align-items-start">
+
+      <!-- Hypervisor type -->
+      <div class="col-md-6">
+        <span class="vmb-lbl">Hypervisor</span>
+        <div class="hv-selector" id="hv-sel-${uid}">
+          <button type="button" class="hv-btn active" data-hv="vmware"
+                  onclick="selectHV(${uid},'vmware')">
+            <i class="bi bi-server text-success"></i>
+            <span>VMware vSphere</span>
+            <small>vCenter / ESXi</small>
+          </button>
+          <button type="button" class="hv-btn" data-hv="hyperv"
+                  onclick="selectHV(${uid},'hyperv')">
+            <i class="bi bi-windows text-primary"></i>
+            <span>Microsoft Hyper-V</span>
+            <small>Windows Server</small>
+          </button>
+        </div>
+        <input type="hidden" name="hypervisor_type" id="hv-type-${uid}" value="vmware">
+      </div>
+
+      <!-- Guest OS type -->
+      <div class="col-md-6">
+        <span class="vmb-lbl">Guest OS</span>
+        <div class="hv-selector" id="os-sel-${uid}">
+          <button type="button" class="hv-btn active" data-os="linux"
+                  onclick="selectGuestOS(${uid},'linux')">
+            <i class="bi bi-terminal-fill" style="color:#f59e0b;"></i>
+            <span>Linux</span>
+            <small>RHEL / CentOS / Rocky</small>
+          </button>
+          <button type="button" class="hv-btn" data-os="windows"
+                  onclick="selectGuestOS(${uid},'windows')">
+            <i class="bi bi-windows" style="color:#0078d4;"></i>
+            <span>Windows</span>
+            <small>Windows Server</small>
+          </button>
+        </div>
+        <input type="hidden" name="vm_os_type" id="os-type-${uid}" value="linux">
+      </div>
+
+    </div>
+  </div>
+
+  <!-- § 1 — Hypervisor Connection ────────────────────────────
+       VMware: vCenter fields  |  Hyper-V: host fields (same inputs reused) -->
+  <div class="vmb-section">
+    <div class="vmb-section-title" id="conn-title-${uid}">
+      <i class="bi bi-hdd-network text-primary"></i>
+      <span id="conn-label-${uid}">vCenter Connection</span>
+    </div>
+    <div class="vmb-vc-tile">
+      <div class="row g-3 align-items-end">
+        <div class="col-md-4">
+          <span class="vmb-lbl" id="host-lbl-${uid}">vCenter</span>
+          <select id="vc-${uid}" name="vcenter_hostname"
+                  class="form-select form-select-sm" required
+                  onchange="onVcChange(${uid})">
+            <option value="">Loading…</option>
+          </select>
+          <div class="vmb-hint" id="vc-h-${uid}"></div>
+          <!-- Hyper-V free text (hidden by default) -->
+          <input type="text" id="hv-host-${uid}" name="_hyperv_hostname"
+                 class="form-control form-control-sm" style="display:none;"
+                 placeholder="e.g. hyperv01.corp.local or 10.0.0.5">
+        </div>
+        <div class="col-md-4">
+          <span class="vmb-lbl">Username</span>
+          <input name="vcenter_username" type="text" class="form-control form-control-sm"
+                 placeholder="administrator@vsphere.local"
+                 value="administrator@vsphere.local" required>
+        </div>
+        <div class="col-md-4">
+          <span class="vmb-lbl">Password</span>
+          <div class="input-group input-group-sm">
+            <input id="pw-${uid}" name="vcenter_password" type="password"
+                   class="form-control form-control-sm"
+                   placeholder="vCenter / Hyper-V password" required>
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePwd('pw-${uid}',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- § 2 — Infrastructure (VMware OR Hyper-V Failover Cluster) -->
+  <div class="vmb-section">
+    <div class="vmb-section-title">
+      <i class="bi bi-diagram-3 text-success"></i>
+      <span id="infra-title-${uid}">Infrastructure</span>
+    </div>
+
+    <!-- ── VMware fields ── -->
+    <div id="vmware-infra-${uid}" class="row g-3 align-items-start">
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-diagram-3"></i>Cluster</span>
+        <select id="cl-${uid}" name="cluster_name"
+                class="form-select form-select-sm" required disabled
+                onchange="onClChange(${uid})">
+          <option value="">— select vCenter first —</option>
+        </select>
+        <div class="vmb-hint" id="cl-h-${uid}"></div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-device-hdd"></i>Datastore</span>
+        <select id="ds-${uid}" name="datastore_name"
+                class="form-select form-select-sm" required disabled
+                onchange="onDsChange(${uid})">
+          <option value="">— select vCenter first —</option>
+        </select>
+        <div class="vmb-hint" id="ds-h-${uid}"></div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl">
+          <i class="bi bi-ethernet"></i>Network / Portgroup
+          <span style="color:#9ca3af;font-size:9px;font-weight:400;margin-left:4px;">manual entry</span>
+        </span>
+        <input name="network_name" id="net-vmware-${uid}" type="text"
+               class="form-control form-control-sm"
+               placeholder="e.g. VM Network, VLAN-100" required>
+        <div class="vmb-hint">
+          <span class="vmb-chip chip-note"><i class="bi bi-keyboard"></i>vSphere portgroup name</span>
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl">
+          <i class="bi bi-file-earmark-code"></i>Template
+          <span style="color:#9ca3af;font-size:9px;font-weight:400;margin-left:4px;">type to search</span>
+        </span>
+        <input name="template_name" id="tpl-${uid}" type="text"
+               list="tpl-list-${uid}" class="form-control form-control-sm"
+               placeholder="Start typing template name…"
+               required oninput="onTplInput(${uid})">
+        <datalist id="tpl-list-${uid}"></datalist>
+        <div class="vmb-hint" id="tpl-h-${uid}"></div>
+      </div>
+
+    </div>
+
+    <!-- ── Hyper-V Failover Cluster (SAN/CSV) fields ── -->
+    <div id="hyperv-infra-${uid}" class="row g-3 align-items-start" style="display:none;">
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-hdd-stack"></i>CSV Volume (SAN)</span>
+        <select id="hv-vol-${uid}" name="datastore_name"
+                class="form-select form-select-sm">
+          <option value="C:\ClusterStorage\Volume1">Volume1 — 10 TB (98% free)</option>
+          <option value="C:\ClusterStorage\Volume2">Volume2 — 10 TB (99% free)</option>
+          <option value="C:\ClusterStorage\Volume3">Volume3 — 10 TB (99% free)</option>
+          <option value="C:\ClusterStorage\Volume4">Volume4 — 10 TB (99% free)</option>
+          <option value="C:\ClusterStorage\Volume5">Volume5 — 10 TB (99% free)</option>
+          <option value="C:\ClusterStorage\Volume11">Volume11 — 4 TB (86% free)</option>
+        </select>
+        <div class="vmb-hint">
+          <span class="vmb-chip chip-info">
+            <i class="bi bi-server"></i>HV-UCSX cluster · SAN CSV storage
+          </span>
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-ethernet"></i>Virtual Switch</span>
+        <input name="network_name" id="net-hyperv-${uid}" type="text"
+               class="form-control form-control-sm"
+               placeholder="e.g. External-vSwitch, Production-vSwitch">
+        <div class="vmb-hint">
+          <span class="vmb-chip chip-note"><i class="bi bi-keyboard"></i>Hyper-V virtual switch name</span>
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-file-earmark-code"></i>Template VHDX Name</span>
+        <input name="template_name" id="tpl-hv-${uid}" type="text"
+               class="form-control form-control-sm"
+               placeholder="e.g. WinSrv2022-Template">
+        <div class="vmb-hint">
+          <span class="vmb-chip chip-note">
+            <i class="bi bi-info-circle"></i>
+            VHDX must be in <code>C:\ClusterStorage\VolumeX\Templates\&lt;name&gt;\</code>
+          </span>
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-folder2"></i>VM Storage Path</span>
+        <input name="vm_folder" id="hv-vmpath-${uid}" type="text"
+               class="form-control form-control-sm"
+               placeholder="C:\ClusterStorage\Volume1\VMs"
+               value="C:\ClusterStorage\Volume1\VMs">
+        <div class="vmb-hint">
+          <span class="vmb-chip chip-note">
+            <i class="bi bi-hdd-stack"></i>Where VM config and VHDX are stored on CSV
+          </span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- § 3 — VM Identity -->
+  <div class="vmb-section">
+    <div class="vmb-section-title">
+      <i class="bi bi-pc-display-horizontal text-info"></i>VM Identity
+    </div>
+    <div class="row g-3">
+      <div class="col-md-4">
+        <span class="vmb-lbl"><i class="bi bi-tag"></i>VM Name</span>
+        <input name="vm_name" type="text" class="form-control form-control-sm"
+               placeholder="prod-web-01" required>
+      </div>
+      <div class="col-md-4">
+        <span class="vmb-lbl">Hostname (FQDN)</span>
+        <input name="vm_hostname" type="text" class="form-control form-control-sm"
+               placeholder="prod-web-01.corp.local" required>
+      </div>
+      <div class="col-md-4">
+        <span class="vmb-lbl">VM Folder</span>
+        <input name="vm_folder" type="text" class="form-control form-control-sm"
+               placeholder="/Datacenter/vm/Production">
+      </div>
+    </div>
+  </div>
+
+  <!-- § 4 — Network Config -->
+  <div class="vmb-section">
+    <div class="vmb-section-title">
+      <i class="bi bi-globe text-warning"></i>Network Configuration
+    </div>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-router"></i>IP Address</span>
+        <input name="vm_ip" type="text" class="form-control form-control-sm"
+               placeholder="10.0.0.50" required>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">Subnet Mask</span>
+        <input name="vm_netmask" type="text" class="form-control form-control-sm"
+               placeholder="255.255.255.0" required>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">Default Gateway</span>
+        <input name="vm_gateway" type="text" class="form-control form-control-sm"
+               placeholder="10.0.0.1" required>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">DNS Server</span>
+        <input name="vm_dns" type="text" class="form-control form-control-sm"
+               placeholder="8.8.8.8" required>
+      </div>
+    </div>
+  </div>
+
+  <!-- § 5 — Compute Resources -->
+  <div class="vmb-section">
+    <div class="vmb-section-title">
+      <i class="bi bi-cpu text-danger"></i>Compute Resources
+      <span style="color:#9ca3af;font-size:9px;font-weight:400;">auto-filled from template, editable</span>
+    </div>
+    <div class="row g-3">
+      <div class="col-md-3">
+        <span class="vmb-lbl"><i class="bi bi-cpu"></i>vCPUs</span>
+        <input id="cpu-${uid}" name="cpu" type="number" min="1"
+               class="form-control form-control-sm" placeholder="2" required>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">RAM (MB)</span>
+        <input id="ram-${uid}" name="ram" type="number" min="512" step="512"
+               class="form-control form-control-sm" placeholder="4096" required>
+        <div class="vmb-hint" id="ram-h-${uid}"></div>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">Disk Size (GB)</span>
+        <input name="disk_size" type="number" min="1"
+               class="form-control form-control-sm" placeholder="50" required>
+      </div>
+      <div class="col-md-3">
+        <span class="vmb-lbl">Disk Provisioning</span>
+        <select name="disk_type" class="form-select form-select-sm" required>
+          <option value="" disabled selected>— select —</option>
+          <option value="thin">💾  Thin Provision</option>
+          <option value="thick">🗂  Thick — Lazy Zeroed</option>
+          <option value="eagerzeroedthick">⚡  Thick — Eager Zeroed</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- § 5b — Offline Installation Config ─────────────────── -->
+  <div class="vmb-section" id="offline-section-${uid}">
+    <div class="vmb-section-title">
+      <i class="bi bi-hdd-stack text-secondary"></i>Offline Installation Config
+      <span style="color:#9ca3af;font-size:9px;font-weight:400;">
+        no internet — all packages from local sources
+      </span>
+    </div>
+
+    <!-- ── LINUX offline ─────────────────────────────────── -->
+    <div id="linux-offline-${uid}">
+      <div class="row g-3">
+        <div class="col-md-5">
+          <span class="vmb-lbl"><i class="bi bi-hdd-network me-1"></i>NFS Repo Mount Point or URL</span>
+          <input name="linux_repo_url" type="text" class="form-control form-control-sm"
+                 placeholder="/iso  or  http://10.19.8.133/repo/rhel9"
+                 value="/iso">
+          <div class="vmb-hint">
+            <span class="vmb-chip chip-ok"><i class="bi bi-check-circle"></i>
+              Default: <code>/iso</code> (already mounted via NFS: 10.19.8.133:/repo/rhel9)
+            </span>
+          </div>
+        </div>
+        <div class="col-md-7">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;
+                      padding:10px 12px;line-height:1.8;font-size:12px;margin-top:20px;">
+            <strong style="color:#15803d;"><i class="bi bi-check-circle-fill me-1"></i>
+              Your NFS repo is already configured:</strong><br>
+            Mount: <code>mount 10.19.8.133:/repo/rhel9 /iso</code><br>
+            The generated script uses <code>baseurl=file:///iso</code> — packages install from
+            this mount point. Keep <code>/iso</code> as the value unless the mount point changes.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── WINDOWS offline ───────────────────────────────── -->
+    <div id="windows-offline-${uid}" style="display:none;">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;
+                  padding:10px 14px;line-height:1.8;font-size:12px;margin-bottom:14px;">
+        <strong style="color:#1d4ed8;">
+          <i class="bi bi-disc-fill me-1"></i>Windows Offline Strategy — ISO on CSV Storage
+        </strong><br>
+        <b>Windows Features</b> (IIS, ASP.NET, .NET Framework):
+          <code>Install-WindowsFeature</code> reads from the <b>local Windows image</b> — no ISO needed.<br>
+        <b>Third-party packages</b> (SQL, MySQL, Node.js, Python, Java, etc.):
+          installed from a <b>packages ISO</b> you built and stored on a CSV volume.<br>
+        The Hyper-V playbook attaches the ISO as a DVD drive on the VM,
+        then your script installs from <code>D:\</code>.
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-7">
+          <span class="vmb-lbl"><i class="bi bi-disc me-1"></i>Packages ISO Path on CSV Storage</span>
+          <input name="win_iso_path" type="text" class="form-control form-control-sm"
+                 placeholder="C:\ClusterStorage\Volume1\ISO\packages.iso">
+          <div class="vmb-hint">
+            <span class="vmb-chip chip-note">
+              <i class="bi bi-info-circle"></i>
+              ISO is attached to the VM as DVD drive — script installs from <code>D:\</code>
+            </span>
+          </div>
+        </div>
+        <div class="col-md-5">
+          <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;
+                      padding:8px 12px;line-height:1.7;font-size:11px;margin-top:20px;">
+            <strong style="color:#c2410c;"><i class="bi bi-exclamation-triangle me-1"></i>ISO layout required:</strong><br>
+            <code>D:\SQLServer\SQL2022Express.exe</code><br>
+            <code>D:\MySQL\mysql-installer.msi</code><br>
+            <code>D:\PostgreSQL\pgsql-16-win64.exe</code><br>
+            <code>D:\NodeJS\node-v20-x64.msi</code><br>
+            <code>D:\Python\python-3.12-amd64.exe</code><br>
+            <code>D:\Java\OpenJDK17-jdk-win64.msi</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Guest admin creds for WinRM post-install -->
+      <div class="row g-3">
+        <div class="col-md-4">
+          <span class="vmb-lbl"><i class="bi bi-person-fill-gear me-1"></i>Guest Admin Username</span>
+          <input name="vm_admin_user" type="text" class="form-control form-control-sm"
+                 placeholder="Administrator" value="Administrator">
+        </div>
+        <div class="col-md-4">
+          <span class="vmb-lbl">Guest Admin Password</span>
+          <div class="input-group input-group-sm">
+            <input id="guest-pw-${uid}" name="vm_admin_password" type="password"
+                   class="form-control form-control-sm" placeholder="Guest admin password">
+            <button class="btn btn-outline-secondary" type="button"
+                    onclick="togglePwd('guest-pw-${uid}',this)">
+              <i class="bi bi-eye"></i>
+            </button>
+          </div>
+          <div class="vmb-hint">Used for WinRM connection + PowerShell Direct network config</div>
+        </div>
+        <div class="col-md-4">
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;
+                      padding:8px 10px;line-height:1.6;font-size:11px;margin-top:20px;">
+            <i class="bi bi-shield-check text-success me-1"></i>
+            <strong>WSUS</strong> handles Windows OS updates automatically.<br>
+            No configuration needed for OS patches.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- § 6 — Platform as a Service -->
+  <div class="vmb-section">
+    <div class="vmb-section-title">
+      <i class="bi bi-boxes text-primary"></i>Platform as a Service
+      <span style="color:#9ca3af;font-size:9px;font-weight:400;">
+        select OS type &amp; services → script auto-generated · like Azure/AWS PaaS
+      </span>
+    </div>
+    <div class="paas-wrapper" id="paas-${uid}">
+
+      <!-- OS selector -->
+      <div class="paas-os-row">
+        <button type="button" class="paas-os-btn active" data-os="linux"
+                onclick="selectOS(${uid},'linux')">
+          <i class="bi bi-terminal-fill"></i>
+          <span>Linux</span><small>RHEL / CentOS / Rocky</small>
+        </button>
+        <button type="button" class="paas-os-btn" data-os="windows"
+                onclick="selectOS(${uid},'windows')">
+          <i class="bi bi-windows"></i>
+          <span>Windows</span><small>Windows Server</small>
+        </button>
+      </div>
+
+      <!-- Linux platforms -->
+      <div id="paas-linux-${uid}" class="paas-tiles">
+
+        <div class="paas-category">🌐 Web Servers</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="apache"  data-label="Apache HTTPD"  onchange="buildScript(${uid})"><i class="bi bi-globe2"></i><span>Apache</span><small>httpd + mod_ssl</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="nginx"   data-label="Nginx"          onchange="buildScript(${uid})"><i class="bi bi-lightning-charge-fill"></i><span>Nginx</span><small>nginx</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="tomcat"  data-label="Tomcat"         onchange="buildScript(${uid})"><i class="bi bi-cup-hot-fill"></i><span>Tomcat</span><small>tomcat + java17</small></label>
+        </div>
+
+        <div class="paas-category">🗄️ Databases</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="mariadb"  data-label="MariaDB"     onchange="buildScript(${uid})"><i class="bi bi-database-fill"></i><span>MariaDB</span><small>mariadb-server</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="mysql"    data-label="MySQL 8"     onchange="buildScript(${uid})"><i class="bi bi-database-fill-gear"></i><span>MySQL</span><small>mysql-server</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="postgres" data-label="PostgreSQL"  onchange="buildScript(${uid})"><i class="bi bi-database-fill-check"></i><span>PostgreSQL</span><small>postgresql</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="mongodb"  data-label="MongoDB 7"   onchange="buildScript(${uid})"><i class="bi bi-database-fill-exclamation"></i><span>MongoDB</span><small>mongodb-org 7.0</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="redis"    data-label="Redis"       onchange="buildScript(${uid})"><i class="bi bi-memory"></i><span>Redis</span><small>redis (cache)</small></label>
+        </div>
+
+        <div class="paas-category">⚙️ Runtimes</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="php"     data-label="PHP 8 + FPM"   onchange="buildScript(${uid})"><i class="bi bi-filetype-php"></i><span>PHP</span><small>php + extensions</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="python3" data-label="Python 3"       onchange="buildScript(${uid})"><i class="bi bi-filetype-py"></i><span>Python 3</span><small>python3 + pip + venv</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="java17"  data-label="Java 17"        onchange="buildScript(${uid})"><i class="bi bi-cup-hot-fill"></i><span>Java 17</span><small>openjdk-17</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="nodejs"  data-label="Node.js 20 LTS" onchange="buildScript(${uid})"><i class="bi bi-braces"></i><span>Node.js</span><small>node 20 LTS + npm + pm2</small></label>
+        </div>
+
+        <div class="paas-category">🔧 DevOps &amp; Tools</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="docker"   data-label="Docker CE"      onchange="buildScript(${uid})"><i class="bi bi-box-seam-fill"></i><span>Docker</span><small>docker-ce + compose</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="ansible"  data-label="Ansible"        onchange="buildScript(${uid})"><i class="bi bi-gear-wide-connected"></i><span>Ansible</span><small>ansible-core</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="git"      data-label="Git"            onchange="buildScript(${uid})"><i class="bi bi-git"></i><span>Git</span><small>git</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="haproxy"  data-label="HAProxy LB"     onchange="buildScript(${uid})"><i class="bi bi-distribute-horizontal"></i><span>HAProxy</span><small>load balancer</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="firewalld" data-label="Firewalld"     onchange="buildScript(${uid})"><i class="bi bi-shield-fill-check"></i><span>Firewall</span><small>firewalld</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="chrony"   data-label="NTP (Chrony)"   onchange="buildScript(${uid})"><i class="bi bi-clock-fill"></i><span>NTP</span><small>chrony</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="zabbix"   data-label="Zabbix Agent"   onchange="buildScript(${uid})"><i class="bi bi-activity"></i><span>Zabbix</span><small>zabbix-agent2</small></label>
+        </div>
+
+        <div class="paas-category">📦 Stacks (Bundles)</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="lamp"   data-bundle="lamp"   data-label="LAMP Stack"     onchange="buildScript(${uid})"><i class="bi bi-layers-fill"></i><span>LAMP</span><small>Apache + MariaDB + PHP</small></label>
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="lemp"   data-bundle="lemp"   data-label="LEMP Stack"     onchange="buildScript(${uid})"><i class="bi bi-layers-half"></i><span>LEMP</span><small>Nginx + MySQL + PHP</small></label>
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="mean"   data-bundle="mean"   data-label="MEAN Stack"     onchange="buildScript(${uid})"><i class="bi bi-stack"></i><span>MEAN</span><small>MongoDB + Node.js</small></label>
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="devops" data-bundle="devops" data-label="DevOps Kit"     onchange="buildScript(${uid})"><i class="bi bi-tools"></i><span>DevOps Kit</span><small>Git + Docker + Ansible</small></label>
+        </div>
+      </div>
+
+      <!-- Windows platforms -->
+      <div id="paas-windows-${uid}" class="paas-tiles" style="display:none;">
+
+        <div class="paas-category">🌐 Web / IIS</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="iis"      data-label="IIS Web Server"   onchange="buildScript(${uid})"><i class="bi bi-globe2"></i><span>IIS</span><small>Web-Server role</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="aspnet"   data-label="IIS + ASP.NET 4.5" onchange="buildScript(${uid})"><i class="bi bi-code-square"></i><span>ASP.NET</span><small>IIS + .NET 4.5</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="dotnet8"  data-label=".NET 8 SDK+Runtime" onchange="buildScript(${uid})"><i class="bi bi-filetype-cs"></i><span>.NET 8</span><small>SDK + Runtime</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="dotnet6"  data-label=".NET 6 LTS"         onchange="buildScript(${uid})"><i class="bi bi-filetype-cs"></i><span>.NET 6 LTS</span><small>LTS Runtime</small></label>
+        </div>
+
+        <div class="paas-category">🗄️ Databases</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="sqlexpress" data-label="SQL Server 2022 Express" onchange="buildScript(${uid})"><i class="bi bi-database-fill"></i><span>SQL Express</span><small>SQL Server 2022</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="ssms"       data-label="SSMS"                   onchange="buildScript(${uid})"><i class="bi bi-window-fullscreen"></i><span>SSMS</span><small>SQL Mgmt Studio</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="mysql-win"  data-label="MySQL 8 (Windows)"      onchange="buildScript(${uid})"><i class="bi bi-database-fill-gear"></i><span>MySQL</span><small>via Chocolatey</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="pg-win"     data-label="PostgreSQL 16"          onchange="buildScript(${uid})"><i class="bi bi-database-fill-check"></i><span>PostgreSQL</span><small>via Chocolatey</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="redis_win"  data-label="Redis (Windows)"        onchange="buildScript(${uid})"><i class="bi bi-memory"></i><span>Redis</span><small>via Chocolatey</small></label>
+        </div>
+
+        <div class="paas-category">⚙️ Runtimes &amp; Tools</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="python-win" data-label="Python 3.12"    onchange="buildScript(${uid})"><i class="bi bi-filetype-py"></i><span>Python 3</span><small>3.12 via choco</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="node-win"   data-label="Node.js 20 LTS" onchange="buildScript(${uid})"><i class="bi bi-braces"></i><span>Node.js</span><small>LTS via choco</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="java_win"   data-label="Java 17 (Win)"  onchange="buildScript(${uid})"><i class="bi bi-cup-hot-fill"></i><span>Java 17</span><small>Temurin OpenJDK</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="choco"      data-label="Chocolatey"     onchange="buildScript(${uid})"><i class="bi bi-box-fill"></i><span>Chocolatey</span><small>pkg manager</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="docker_win" data-label="Docker Desktop" onchange="buildScript(${uid})"><i class="bi bi-box-seam-fill"></i><span>Docker</span><small>Docker Desktop</small></label>
+          <label class="paas-tile"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="git_win"    data-label="Git for Windows" onchange="buildScript(${uid})"><i class="bi bi-git"></i><span>Git</span><small>git for windows</small></label>
+        </div>
+
+        <div class="paas-category">📦 Bundles</div>
+        <div class="paas-tile-row">
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="win-web"    data-label="Web Platform"    onchange="buildScript(${uid})"><i class="bi bi-layers-fill"></i><span>Web Platform</span><small>IIS + ASP.NET + SQL</small></label>
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="win-dotnet" data-label=".NET Stack"      onchange="buildScript(${uid})"><i class="bi bi-layers-half"></i><span>.NET Stack</span><small>IIS + .NET 8 + Node</small></label>
+          <label class="paas-tile paas-tile-bundle"><input type="checkbox" class="paas-check" data-uid="${uid}" data-pkg="win-db"     data-label="DB Bundle"       onchange="buildScript(${uid})"><i class="bi bi-database-fill-lock"></i><span>DB Bundle</span><small>SQL + MySQL + PG</small></label>
+        </div>
+      </div>
+
+      <!-- Generated script output -->
+      <div class="paas-script-wrap" id="paas-script-wrap-${uid}" style="display:none;">
+        <div class="paas-script-header">
+          <span id="paas-script-label-${uid}">
+            <i class="bi bi-file-earmark-code me-1"></i>Generated Installation Script
+          </span>
+          <div class="d-flex gap-2 align-items-center">
+            <span class="paas-tag" id="paas-tag-${uid}"></span>
+            <button type="button" class="paas-edit-btn" id="paas-edit-btn-${uid}"
+                    onclick="toggleScriptEdit(${uid})">
+              <i class="bi bi-pencil me-1"></i>Edit
+            </button>
+            <button type="button" class="paas-clear-btn"
+                    onclick="clearPlatform(${uid})">
+              <i class="bi bi-x me-1"></i>Clear All
+            </button>
+          </div>
+        </div>
+        <textarea name="user_data" id="paas-script-${uid}"
+                  class="paas-script-ta" rows="10" readonly></textarea>
+      </div>
+
+      <!-- Empty state -->
+      <div class="paas-empty" id="paas-empty-${uid}">
+        <i class="bi bi-boxes opacity-25 fs-3 d-block mb-2"></i>
+        Select platforms above — the installation script will be generated automatically
+      </div>
+
+    </div>
+  </div>
+`; }
+
+// ══════════════════════════════════════════════════════════
+//  HYPERVISOR & OS TYPE SWITCHING
+// ══════════════════════════════════════════════════════════
+const _hvType  = {};   // uid → 'vmware' | 'hyperv'
+const _guestOS = {};   // uid → 'linux'  | 'windows'
+
+function selectHV(uid, hv) {
+  _hvType[uid] = hv;
+  document.getElementById(`hv-type-${uid}`).value = hv;
+
+  // Toggle button styles
+  document.getElementById(`hv-sel-${uid}`)
+    .querySelectorAll('.hv-btn')
+    .forEach(b => b.classList.toggle('active', b.dataset.hv === hv));
+
+  // Update connection label
+  const lbl = document.getElementById(`conn-label-${uid}`);
+  if (lbl) lbl.textContent = hv === 'hyperv' ? 'Hyper-V Host Connection' : 'vCenter Connection';
+
+  // For Hyper-V: hide vCenter dropdown, show free-text host input
+  const vcSel  = document.getElementById(`vc-${uid}`);
+  const hvHost = document.getElementById(`hv-host-${uid}`);
+  const hostLbl = document.getElementById(`host-lbl-${uid}`);
+  if (hv === 'hyperv') {
+    vcSel.style.display  = 'none';  vcSel.removeAttribute('required');
+    hvHost.style.display = '';      hvHost.required = true;
+    if (hostLbl) hostLbl.textContent = 'Hyper-V Host';
+    // Mirror hvHost value into vcenter_hostname field used by backend
+    hvHost.oninput = () => { vcSel.value = hvHost.value; };
+    // Hide cluster/datastore (Hyper-V uses different fields)
+    const cl = document.getElementById(`cl-${uid}`);
+    const ds = document.getElementById(`ds-${uid}`);
+    if (cl) { cl.required = false; cl.closest('.col-md-3').style.opacity = '.4'; }
+    if (ds) { ds.required = false; ds.closest('.col-md-3').style.opacity = '.4'; }
+    // Clear infra hints
+    ['vc-h','cl-h','ds-h','tpl-h'].forEach(p => {
+      const el = document.getElementById(`${p}-${uid}`);
+      if (el) el.innerHTML = '';
+    });
+  } else {
+    vcSel.style.display  = '';     vcSel.required = true;
+    hvHost.style.display = 'none'; hvHost.required = false;
+    if (hostLbl) hostLbl.textContent = 'vCenter';
+    const cl = document.getElementById(`cl-${uid}`);
+    const ds = document.getElementById(`ds-${uid}`);
+    if (cl) { cl.required = true;  cl.closest('.col-md-3').style.opacity = '1'; }
+    if (ds) { ds.required = true;  ds.closest('.col-md-3').style.opacity = '1'; }
+  }
+
+  // Toggle infrastructure sections VMware vs Hyper-V
+  const vmwareInfra = document.getElementById('vmware-infra-' + uid);
+  const hypervInfra = document.getElementById('hyperv-infra-' + uid);
+  if (vmwareInfra) vmwareInfra.style.display = hv === 'vmware' ? '' : 'none';
+  if (hypervInfra) hypervInfra.style.display = hv === 'hyperv' ? '' : 'none';
+  const infraTitle = document.getElementById('infra-title-' + uid);
+  if (infraTitle) {
+    infraTitle.textContent = hv === 'hyperv'
+      ? 'Infrastructure — Hyper-V Failover Cluster (HV-UCSX)'
+      : 'Infrastructure';
+  }
+  if (hv === 'hyperv') {
+    // Sync Hyper-V network input to the backend network_name field
+    const hvNet  = document.getElementById('net-hyperv-' + uid);
+    const vmNet  = document.getElementById('net-vmware-' + uid);
+    if (hvNet && vmNet) {
+      vmNet.value = hvNet.value;
+      hvNet.oninput = () => { vmNet.value = hvNet.value; };
+    }
+    // Sync CSV volume → datastore_name (backend reads name="datastore_name")
+    const hvVol  = document.getElementById('hv-vol-' + uid);
+    const hvPath = document.getElementById('hv-vmpath-' + uid);
+    if (hvVol) {
+      hvVol.oninput = () => {
+        if (hvPath) hvPath.value = hvVol.value + '\\VMs';
+      };
+    }
+  }
+  _syncOfflinePanel(uid);
+}
+
+function selectGuestOS(uid, os) {
+  _guestOS[uid] = os;
+  document.getElementById(`os-type-${uid}`).value = os;
+
+  // Toggle button styles
+  document.getElementById(`os-sel-${uid}`)
+    .querySelectorAll('.hv-btn')
+    .forEach(b => b.classList.toggle('active', b.dataset.os === os));
+
+  // Sync offline panel visibility
+  _syncOfflinePanel(uid);
+
+  // Re-build script if PaaS selections exist
+  buildScript(uid);
+}
+
+function _syncOfflinePanel(uid) {
+  const os = _guestOS[uid] || 'linux';
+  const linuxPanel   = document.getElementById(`linux-offline-${uid}`);
+  const windowsPanel = document.getElementById(`windows-offline-${uid}`);
+  if (linuxPanel)   linuxPanel.style.display   = os === 'linux'   ? '' : 'none';
+  if (windowsPanel) windowsPanel.style.display = os === 'windows' ? '' : 'none';
+}
+
+// ══════════════════════════════
+//  PASSWORD TOGGLE
+// ══════════════════════════════
+function togglePwd(id, btn) {
+  const el = document.getElementById(id);
+  el.type = el.type === 'password' ? 'text' : 'password';
+  btn.innerHTML = el.type === 'password'
+    ? '<i class="bi bi-eye"></i>'
+    : '<i class="bi bi-eye-slash"></i>';
+}
+
+// ══════════════════════════════
+//  LOAD vCENTERS
+// ══════════════════════════════
+async function loadVcenters(uid) {
+  const sel = document.getElementById(`vc-${uid}`);
+  try {
+    const data = await api('/api/vcenter_options');
+    sel.innerHTML = '<option value="">— select vCenter —</option>';
+    data.forEach(vc => {
+      const ip  = vc.ip_address || vc.hostname;
+      sel.innerHTML +=
+        `<option value="${x(vc.hostname)}"
+                 data-id="${vc.vcenter_id}"
+                 data-name="${x(vc.vcenter_name)}"
+                 data-ip="${x(ip)}">
+           ${x(vc.vcenter_name)}  ·  ${x(ip)}
+         </option>`;
+    });
+    sel.disabled = false;
+
+    if (_urlVcenter || _urlVcId) {
+      for (const opt of sel.options) {
+        if ((_urlVcenter && opt.value === _urlVcenter) ||
+            (_urlVcId    && opt.dataset.id === _urlVcId)) {
+          sel.value = opt.value;
+          await onVcChange(uid);
+          break;
+        }
+      }
+    }
+  } catch {
+    sel.innerHTML = '<option value="">⚠ DB error — check connection</option>';
+    sel.disabled = false;
+  }
+}
+
+// ══════════════════════════════
+//  vCENTER CHANGED
+// ══════════════════════════════
+async function onVcChange(uid) {
+  const sel  = document.getElementById(`vc-${uid}`);
+  const opt  = sel.selectedOptions[0];
+  const vcId = opt?.dataset.id || '';
+
+  const clSel = document.getElementById(`cl-${uid}`);
+  const dsSel = document.getElementById(`ds-${uid}`);
+  clSel.innerHTML = '<option value="">Loading…</option>';
+  dsSel.innerHTML = '<option value="">Loading…</option>';
+  clSel.disabled = dsSel.disabled = true;
+  document.getElementById(`tpl-list-${uid}`).innerHTML = '';
+
+  if (opt?.dataset.name) {
+    setHint(`vc-h-${uid}`,
+      `<span class="vmb-chip chip-info"><i class="bi bi-hdd-network"></i>${x(opt.dataset.name)}</span>
+       <span class="vmb-chip chip-info ms-1"><i class="bi bi-ethernet"></i>${x(opt.dataset.ip)}</span>`);
+  }
+
+  if (!vcId) return;
+
+  const [clusters, datastores, templates] = await Promise.all([
+    api(`/api/infra_options/clusters?vcenter_id=${vcId}`).catch(() => []),
+    api(`/api/infra_options/datastores?vcenter_id=${vcId}`).catch(() => []),
+    api(`/api/infra_options/templates?vcenter_id=${vcId}`).catch(() => []),
+  ]);
+
+  _cache[uid] = { vcId, clusters, datastores, templates };
+
+  // clusters
+  clSel.innerHTML = '<option value="">— select cluster —</option>';
+  clusters.forEach(c => {
+    clSel.innerHTML += `<option value="${x(c.cluster_name)}">${x(c.cluster_name)}</option>`;
+  });
+  clSel.disabled = false;
+  setHint(`cl-h-${uid}`,
+    clusters.length
+      ? `<span class="vmb-chip chip-ok"><i class="bi bi-check-circle"></i>${clusters.length} clusters</span>`
+      : `<span class="vmb-chip chip-bad">No clusters found</span>`);
+
+  // datastores
+  dsSel.innerHTML = '<option value="">— select datastore —</option>';
+  datastores.forEach(d => {
+    const pct = parseFloat(d.free_percent || 0);
+    const icon = pct < 15 ? '🔴' : pct < 40 ? '🟡' : '🟢';
+    dsSel.innerHTML +=
+      `<option value="${x(d.datastore_name)}"
+               data-free="${d.free_gb}" data-cap="${d.capacity_gb}" data-pct="${pct}">
+         ${icon} ${x(d.datastore_name)}  (${d.free_gb} GB free)
+       </option>`;
+  });
+  dsSel.disabled = false;
+  setHint(`ds-h-${uid}`,
+    datastores.length
+      ? `<span class="vmb-chip chip-ok"><i class="bi bi-check-circle"></i>${datastores.length} datastores</span>`
+      : `<span class="vmb-chip chip-bad">No accessible datastores</span>`);
+
+  // templates → datalist
+  const tplList = document.getElementById(`tpl-list-${uid}`);
+  tplList.innerHTML = '';
+  templates.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.template_name;
+    o.dataset.cpu = t.default_cpu || '';
+    o.dataset.ram = t.default_ram || '';
+    o.dataset.os  = t.os || '';
+    tplList.appendChild(o);
+  });
+  setHint(`tpl-h-${uid}`,
+    templates.length
+      ? `<span class="vmb-chip chip-ok"><i class="bi bi-check-circle"></i>${templates.length} templates found</span>`
+      : `<span class="vmb-chip chip-warn">No templates in DB — type manually</span>`);
+
+  setHint(`vc-h-${uid}`,
+    `<span class="vmb-chip chip-info">${clusters.length} clusters</span>
+     <span class="vmb-chip chip-info ms-1">${datastores.length} datastores</span>
+     <span class="vmb-chip chip-info ms-1">${templates.length} templates</span>`);
+}
+
+// ══════════════════════════════
+//  CLUSTER CHANGED
+// ══════════════════════════════
+function onClChange(uid) {
+  const name = document.getElementById(`cl-${uid}`).value;
+  const c = (_cache[uid]?.clusters || []).find(c => c.cluster_name === name);
+  if (!c) { setHint(`cl-h-${uid}`, ''); return; }
+  const cc = freeClass(100 - c.cpu_usage_percent);
+  const rc = freeClass(100 - c.memory_usage_percent);
+  setHint(`cl-h-${uid}`,
+    `<span class="vmb-chip ${cc}"><i class="bi bi-cpu"></i>${c.free_cpu_ghz} GHz free</span>
+     <span class="vmb-chip ${rc} ms-1"><i class="bi bi-memory"></i>${c.free_ram_gb} GB RAM free</span>
+     <span class="vmb-chip chip-note ms-1">${c.num_hosts} hosts · ${c.num_vms} VMs</span>`);
+}
+
+// ══════════════════════════════
+//  DATASTORE CHANGED
+// ══════════════════════════════
+function onDsChange(uid) {
+  const opt = document.getElementById(`ds-${uid}`).selectedOptions[0];
+  if (!opt?.value) { setHint(`ds-h-${uid}`, ''); return; }
+  const pct = parseFloat(opt.dataset.pct || 0);
+  setHint(`ds-h-${uid}`,
+    `<span class="vmb-chip ${freeClass(pct)}">
+       <i class="bi bi-hdd"></i>${opt.dataset.free} GB free of ${opt.dataset.cap} GB (${pct.toFixed(1)}%)
+     </span>`);
+}
+
+// ══════════════════════════════
+//  TEMPLATE INPUT → auto-fill
+// ══════════════════════════════
+function onTplInput(uid) {
+  const val  = document.getElementById(`tpl-${uid}`).value.trim();
+  const list = document.getElementById(`tpl-list-${uid}`);
+  let m = null;
+  for (const o of list.options) {
+    if (o.value.toLowerCase() === val.toLowerCase()) { m = o; break; }
+  }
+  if (!m) { setHint(`tpl-h-${uid}`, ''); return; }
+
+  if (m.dataset.cpu) document.getElementById(`cpu-${uid}`).value = m.dataset.cpu;
+  if (m.dataset.ram) document.getElementById(`ram-${uid}`).value = m.dataset.ram;
+
+  const ramGB = m.dataset.ram ? (m.dataset.ram / 1024).toFixed(1) + ' GB' : '';
+  setHint(`tpl-h-${uid}`,
+    `<span class="vmb-chip chip-ok">
+       <i class="bi bi-check2-circle"></i>
+       ${m.dataset.os ? x(m.dataset.os) + ' · ' : ''}
+       ${m.dataset.cpu ? m.dataset.cpu + ' vCPU · ' : ''}
+       ${ramGB}
+     </span>`);
+}
+
+// ══════════════════════════════
+//  HELPERS
+// ══════════════════════════════
+function setHint(id, html) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = html;
+}
+function freeClass(pct) {
+  return pct > 40 ? 'chip-ok' : pct > 15 ? 'chip-warn' : 'chip-bad';
+}
+async function api(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+function x(s) {
+  return (s ?? '').toString()
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ══════════════════════════════
+//  COLLECT
+// ══════════════════════════════
+const FIELDS = [
+  'vcenter_hostname','vcenter_username','vcenter_password',
+  'datacenter_name','cluster_name','template_name',
+  'vm_name','vm_hostname','vm_folder',
+  'vm_ip','vm_netmask','vm_gateway','vm_dns',
+  'datastore_name','network_name',
+  'cpu','ram','disk_size','disk_type','user_data',
+];
+
+function collectVMs() {
+  return Array.from(document.querySelectorAll('#vm-rows .vmb-vm-card')).map(card => {
+    const vm = {};
+    FIELDS.forEach(f => {
+      const el = card.querySelector(`[name="${f}"]`);
+      vm[f] = el ? el.value.trim() : '';
+    });
+    return vm;
+  });
+}
+
+function collectFD() {
+  const csv = document.getElementById('csv_file').files[0];
+  const fd  = new FormData();
+  if (csv) { fd.append('csv_file', csv); return fd; }
+  FIELDS.forEach(f => {
+    document.querySelectorAll(
+      `#vm-rows input[name="${f}"],#vm-rows textarea[name="${f}"],#vm-rows select[name="${f}"]`
+    ).forEach(el => fd.append(f, el.value));
+  });
+  return fd;
+}
+
+// ══════════════════════════════
+//  PREVIEW
+// ══════════════════════════════
+function openPreview() {
+  const vms = collectVMs();
+  if (!vms.length) { alert('Add at least one VM.'); return; }
+
+  const tCPU  = vms.reduce((s,v) => s + (+v.cpu || 0), 0);
+  const tRAM  = vms.reduce((s,v) => s + (+v.ram || 0), 0);
+  const tDisk = vms.reduce((s,v) => s + (+v.disk_size || 0), 0);
+
+  document.getElementById('preview-stats').innerHTML = `
+    <span class="vmb-stat"><i class="bi bi-server"></i>${vms.length} VM${vms.length>1?'s':''}</span>
+    <span class="vmb-stat"><i class="bi bi-cpu"></i>${tCPU} vCPUs</span>
+    <span class="vmb-stat"><i class="bi bi-memory"></i>${(tRAM/1024).toFixed(1)} GB RAM</span>
+    <span class="vmb-stat"><i class="bi bi-device-hdd"></i>${tDisk} GB Disk</span>`;
+
+  const cont = document.getElementById('preview-cards');
+  cont.innerHTML = '';
+  vms.forEach((vm, i) => {
+    cont.innerHTML += `
+      <div class="col-md-6 col-xl-4">
+        <div class="vmb-preview-card">
+          <div class="vmb-preview-head">
+            <span class="vmb-preview-title">
+              <i class="bi bi-server me-1"></i>${x(vm.vm_name) || 'VM #'+(i+1)}
+            </span>
+            <span class="badge bg-secondary">#${i+1}</span>
+          </div>
+          <div class="vmb-preview-body">
+            <div class="vmb-preview-sec">Infrastructure</div>
+            <div class="row g-1">
+              ${pr('vCenter',vm.vcenter_hostname)} ${pr('Cluster',vm.cluster_name)}
+              ${pr('Datastore',vm.datastore_name)} ${pr('Network',vm.network_name)}
+              ${pr('Template',vm.template_name)}   ${pr('Folder',vm.vm_folder||'—')}
+            </div>
+            <div class="vmb-preview-sec">Identity &amp; Network</div>
+            <div class="row g-1">
+              ${pr('VM Name',vm.vm_name)} ${pr('Hostname',vm.vm_hostname)}
+              ${pr('IP',vm.vm_ip)}        ${pr('Netmask',vm.vm_netmask)}
+              ${pr('Gateway',vm.vm_gateway)} ${pr('DNS',vm.vm_dns)}
+            </div>
+            <div class="vmb-preview-sec">Resources</div>
+            <div class="d-flex gap-2 flex-wrap">
+              <span class="badge bg-primary">${x(vm.cpu)} vCPU</span>
+              <span class="badge bg-info text-dark">${x(vm.ram)} MB</span>
+              <span class="badge bg-secondary">${x(vm.disk_size)} GB</span>
+              <span class="badge bg-dark">${x(vm.disk_type)}</span>
+            </div>
+            ${vm.user_data.trim() ? `
+            <div class="vmb-preview-sec">Post-Creation Script</div>
+            <pre style="background:#f3f4f6;font-size:10px;max-height:60px;overflow:auto;
+                        padding:8px;border-radius:4px;margin:0;">${x(vm.user_data)}</pre>` : ''}
+          </div>
+        </div>
+      </div>`;
+  });
+
+  const s = document.getElementById('preview-section');
+  s.style.display = 'block';
+  s.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function pr(label, val) {
+  return `
+    <div class="col-6 mb-1">
+      <div class="vmb-preview-lbl">${label}</div>
+      <div class="vmb-preview-val">${x(val) || '<span class="text-muted">—</span>'}</div>
+    </div>`;
+}
+function closePreview() {
+  document.getElementById('preview-section').style.display = 'none';
+}
+
+// ══════════════════════════════
+//  SUBMIT
+// ══════════════════════════════
+async function submitForm() {
+  closePreview();
+  const btn = document.getElementById('review-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Submitting…';
+
+  const names = Array.from(
+    document.querySelectorAll('#vm-rows input[name="vm_name"]')
+  ).map((el, i) => el.value.trim() || `VM-${i+1}`);
+
+  showPending(names);
+
+  let job_id;
+  try {
+    const r = await fetch('/api/create_vm', { method:'POST', body:collectFD() });
+    ({ job_id } = await r.json());
+  } catch {
+    statusErr('Could not reach server.');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-eye-fill me-1"></i>Review &amp; Provision';
+    return;
+  }
+  streamStatus(job_id);
+}
+
+// ══════════════════════════════
+//  STATUS
+// ══════════════════════════════
+function showPending(names) {
+  document.getElementById('summary-bar').style.display = 'none';
+  document.getElementById('status-title').textContent  = 'Connecting to provisioner…';
+  document.getElementById('status-spinner').style.display = '';
+  const grid = document.getElementById('vm-status-grid');
+  grid.innerHTML = '';
+  names.forEach(n => { grid.innerHTML += vmCard(n,'pending','',0); });
+  const panel = document.getElementById('status-panel');
+  panel.style.display = 'block';
+  panel.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
+function streamStatus(jobId) {
+  const es = new EventSource(`/api/vm_job_status/${jobId}`);
+  es.onmessage = e => {
+    const job = JSON.parse(e.data);
+    document.getElementById('status-title').textContent =
+      job.status === 'running' ? 'Provisioning in progress…' :
+      job.status === 'done'    ? '✅  All VMs provisioned successfully' :
+                                  '⚠️  Completed with errors';
+
+    const grid = document.getElementById('vm-status-grid');
+    grid.innerHTML = '';
+    job.vms.forEach(vm => {
+      const p = vm.status==='pending'?0:vm.status==='running'?55:100;
+      grid.innerHTML += vmCard(vm.name, vm.status, vm.log, p);
+    });
+    grid.querySelectorAll('.vmb-log.show pre').forEach(p => { p.scrollTop = p.scrollHeight; });
+
+    if (job.status === 'done' || job.status === 'done_with_errors') {
+      es.close();
+      document.getElementById('status-spinner').style.display = 'none';
+      showSum(job);
+      const btn = document.getElementById('review-btn');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-eye-fill me-1"></i>Review &amp; Provision';
+    }
+  };
+  es.onerror = () => { es.close(); statusErr('SSE connection lost.'); };
+}
+
+function vmCard(name, status, log, progress) {
+  const icons  = { pending:'○', running:'◌', success:'✓', failed:'✕' };
+  const bdg    = { pending:'secondary', running:'info', success:'success', failed:'danger' };
+  const pgcol  = status==='success'?'bg-success':status==='failed'?'bg-danger':'bg-primary';
+  const sid    = 'sl'+Math.random().toString(36).slice(2);
+  const cl     = x(log)
+    .replace(/(ok=\d+)/g,                  '<span class="log-ok">$1</span>')
+    .replace(/(failed=\d+|ERROR|FAILED)/g, '<span class="log-fail">$1</span>')
+    .replace(/(PLAY \[|TASK \[)/g,         '<span class="log-info">$1</span>');
+  return `
+    <div class="vmb-status-card ${status}">
+      <div class="card-header py-2 d-flex align-items-center gap-2"
+           style="cursor:pointer;background:#f9fafb;"
+           data-bs-toggle="collapse" data-bs-target="#${sid}">
+        <span class="fw-bold text-muted">${icons[status]||'○'}</span>
+        <span class="fw-semibold small flex-grow-1">${x(name)}</span>
+        <span class="badge bg-${bdg[status]||'secondary'} text-uppercase" style="font-size:10px;">${status}</span>
+        <i class="bi bi-chevron-down small text-muted"></i>
+      </div>
+      <div class="progress mx-3 mt-1"><div class="progress-bar ${pgcol}" style="width:${progress}%"></div></div>
+      <div class="collapse vmb-log ${status==='running'?'show':''}" id="${sid}">
+        <div class="p-3">
+          <pre>${cl||'<span class="text-muted">Waiting for output…</span>'}</pre>
+        </div>
+      </div>
+    </div>`;
+}
+
+function showSum(job) {
+  const ok   = job.vms.filter(v=>v.status==='success').length;
+  const fail = job.vms.filter(v=>v.status==='failed').length;
+  const bar  = document.getElementById('summary-bar');
+  bar.style.display = 'block';
+  bar.innerHTML = fail===0
+    ? `<div class="alert alert-success d-flex align-items-center gap-2 mb-0">
+         <i class="bi bi-check-circle-fill fs-5"></i>
+         <span>All <strong>${ok}</strong> VM${ok>1?'s':''} provisioned successfully.</span>
+       </div>`
+    : `<div class="alert alert-warning d-flex align-items-center gap-2 mb-0">
+         <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+         <span><strong>${ok}</strong> succeeded, <strong>${fail}</strong> failed. Expand failed VMs above.</span>
+       </div>`;
+}
+
+function statusErr(msg) {
+  document.getElementById('status-title').textContent = msg;
+  document.getElementById('status-spinner').style.display = 'none';
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  PAAS PLATFORM ENGINE
+//  Linux  → bash via Ansible shell (SSH)
+//  Windows → PowerShell via Ansible win_shell (WinRM)
+// ══════════════════════════════════════════════════════════
+
+// ── Linux package definitions ────────────────────────────
+// Each entry: install (yum packages), enable (systemd services), extra (shell commands)
+const PAAS_LINUX = {
+
+  // ── Web Servers ──
+  apache: {
+    install: 'httpd mod_ssl',
+    enable:  'httpd',
+    extra:   [
+      'echo "ServerTokens Prod" >> /etc/httpd/conf/httpd.conf',
+      'firewall-cmd --permanent --add-service=http --add-service=https 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+  nginx: {
+    install: 'nginx',
+    enable:  'nginx',
+    extra:   [
+      'firewall-cmd --permanent --add-service=http --add-service=https 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+  tomcat: {
+    install: 'java-17-openjdk tomcat',
+    enable:  'tomcat',
+    extra:   [
+      'firewall-cmd --permanent --add-port=8080/tcp 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+
+  // ── Databases ──
+  mariadb: {
+    install: 'mariadb-server mariadb',
+    enable:  'mariadb',
+    extra:   [
+      '# Secure MariaDB installation',
+      'mysql -u root <<EOF_SQL',
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY 'Admin@123!';",
+      'DELETE FROM mysql.user WHERE User="";',
+      'DROP DATABASE IF EXISTS test;',
+      'FLUSH PRIVILEGES;',
+      'EOF_SQL',
+    ].join('\n')
+  },
+  mysql: {
+    install: 'mysql-server',
+    enable:  'mysqld',
+    extra:   [
+      '# Wait for MySQL to start',
+      'sleep 5',
+      '# Get temporary password',
+      "TEMP_PASS=$(grep 'temporary password' /var/log/mysqld.log | awk '{print $NF}')",
+      '# Set permanent root password',
+      'mysql --connect-expired-password -u root -p"${TEMP_PASS}" <<EOF_SQL',
+      "ALTER USER 'root'@'localhost' IDENTIFIED BY 'Admin@123!';",
+      'FLUSH PRIVILEGES;',
+      'EOF_SQL',
+    ].join('\n')
+  },
+  postgres: {
+    install: 'postgresql postgresql-server postgresql-contrib',
+    enable:  'postgresql',
+    extra:   [
+      'postgresql-setup --initdb 2>/dev/null || true',
+      'systemctl restart postgresql',
+      '# Allow password authentication',
+      "sed -i \"s/ident/md5/g\" /var/lib/pgsql/data/pg_hba.conf",
+      'systemctl restart postgresql',
+      '# Create admin user',
+      "sudo -u postgres psql -c \"ALTER USER postgres PASSWORD 'Admin@123!';\"",
+      'firewall-cmd --permanent --add-port=5432/tcp 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+  mongodb: {
+    install: '',
+    enable:  'mongod',
+    extra:   [
+      '# Add MongoDB 7.0 repo',
+      'cat > /etc/yum.repos.d/mongodb-org-7.0.repo << "EOF_REPO"',
+      '[mongodb-org-7.0]',
+      'name=MongoDB Repository',
+      'baseurl=https://repo.mongodb.org/yum/redhat/$releasever/mongodb-org/7.0/x86_64/',
+      'gpgcheck=1',
+      'enabled=1',
+      'gpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc',
+      'EOF_REPO',
+      'yum install -y mongodb-org',
+      'systemctl enable --now mongod',
+      'firewall-cmd --permanent --add-port=27017/tcp 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+  redis: {
+    install: 'redis',
+    enable:  'redis',
+    extra:   [
+      '# Bind to all interfaces and set basic config',
+      "sed -i 's/^bind 127.0.0.1/bind 0.0.0.0/' /etc/redis.conf",
+      'firewall-cmd --permanent --add-port=6379/tcp 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+
+  // ── Runtimes ──
+  php: {
+    install: 'php php-fpm php-mysqlnd php-pgsql php-gd php-mbstring php-xml php-zip php-curl php-json',
+    enable:  'php-fpm',
+    extra:   ''
+  },
+  python3: {
+    install: 'python3 python3-pip python3-devel',
+    enable:  '',
+    extra:   [
+      'pip3 install --upgrade pip',
+      'pip3 install virtualenv flask django',
+    ].join('\n')
+  },
+  java17: {
+    install: 'java-17-openjdk java-17-openjdk-devel',
+    enable:  '',
+    extra:   [
+      'java -version',
+      'echo "JAVA_HOME=$(dirname $(dirname $(readlink $(readlink $(which java)))))" >> /etc/environment',
+    ].join('\n')
+  },
+  nodejs: {
+    install: '',
+    enable:  '',
+    extra:   [
+      '# Install Node.js 20 LTS via NodeSource',
+      'curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -',
+      'yum install -y nodejs',
+      'node --version && npm --version',
+      'npm install -g pm2',
+    ].join('\n')
+  },
+
+  // ── DevOps & Tools ──
+  git: {
+    install: 'git',
+    enable:  '',
+    extra:   'git --version'
+  },
+  docker: {
+    install: '',
+    enable:  '',
+    extra:   [
+      '# Install Docker CE',
+      'yum install -y yum-utils',
+      'yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo',
+      'yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin',
+      'systemctl enable --now docker',
+      '# Install Docker Compose standalone',
+      'curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose',
+      'chmod +x /usr/local/bin/docker-compose',
+      'docker --version && docker compose version',
+    ].join('\n')
+  },
+  ansible: {
+    install: 'ansible ansible-core',
+    enable:  '',
+    extra:   'ansible --version'
+  },
+  firewalld: {
+    install: 'firewalld',
+    enable:  'firewalld',
+    extra:   ''
+  },
+  chrony: {
+    install: 'chrony',
+    enable:  'chronyd',
+    extra:   'chronyc tracking'
+  },
+  zabbix: {
+    install: '',
+    enable:  '',
+    extra:   [
+      '# Install Zabbix 6.4 agent',
+      'rpm -Uvh https://repo.zabbix.com/zabbix/6.4/rhel/9/x86_64/zabbix-release-6.4-1.el9.noarch.rpm 2>/dev/null || true',
+      'yum install -y zabbix-agent2',
+      'systemctl enable --now zabbix-agent2',
+    ].join('\n')
+  },
+  haproxy: {
+    install: 'haproxy',
+    enable:  'haproxy',
+    extra:   [
+      'firewall-cmd --permanent --add-port=80/tcp --add-port=443/tcp --add-port=8404/tcp 2>/dev/null || true',
+      'firewall-cmd --reload 2>/dev/null || true',
+    ].join('\n')
+  },
+};
+
+// ── Linux bundle definitions ─────────────────────────────
+const PAAS_BUNDLES = {
+  lamp:    { label: 'LAMP Stack',          pkgs: ['apache','mariadb','php'] },
+  lemp:    { label: 'LEMP Stack',          pkgs: ['nginx','mysql','php']    },
+  mean:    { label: 'MEAN (Mongo+Node)',    pkgs: ['mongodb','nodejs']       },
+  devops:  { label: 'DevOps Kit',          pkgs: ['git','docker','ansible'] },
+};
+
+// ── Windows script blocks (PowerShell) ─────────────────────
+// ───────────────────────────────────────────────────────────
+// OFFLINE STRATEGY:
+//   • Windows Features (IIS, .NET, ASP.NET): Install-WindowsFeature
+//     — reads from local Windows image (WIM/SxS), NO internet needed
+//   • Third-party apps: install from local SMB share
+//     — Share path / user / password set in the Offline Config section
+//     — buildWindowsScript() injects the map-share + Install-FromISO helper
+//   • WSUS: handles Windows OS updates automatically (not scripted here)
+// ───────────────────────────────────────────────────────────
+
+// Each value = the core PowerShell block WITHOUT the share-mapping preamble.
+// buildWindowsScript() prepends the share helper when share path is set.
+const PAAS_WINDOWS = {
+
+  // ════════════════════════════════════
+  //  WEB / IIS  — uses local Windows image (no internet)
+  // ════════════════════════════════════
+  iis: `# ── IIS Web Server (from local Windows image) ───────────
+Install-WindowsFeature -Name Web-Server,Web-Common-Http,Web-Default-Doc,Web-Http-Errors,Web-Static-Content,Web-Http-Logging,Web-Stat-Compression,Web-Filtering,Web-Mgmt-Console -IncludeManagementTools
+# Open firewall
+netsh advfirewall firewall add rule name="HTTP"  dir=in action=allow protocol=TCP localport=80
+netsh advfirewall firewall add rule name="HTTPS" dir=in action=allow protocol=TCP localport=443
+# Start and set auto-start
+Set-Service W3SVC -StartupType Automatic
+Start-Service W3SVC
+Write-Host "IIS installed and running on port 80/443"`,
+
+  aspnet: `# ── IIS + ASP.NET 4.5 (from local Windows image) ────────
+Install-WindowsFeature -Name Web-Server,Web-Asp-Net45,NET-Framework-45-Core,NET-Framework-45-ASPNET,Web-Net-Ext45,Web-ISAPI-Ext,Web-ISAPI-Filter,Web-Mgmt-Console -IncludeManagementTools
+netsh advfirewall firewall add rule name="HTTP"  dir=in action=allow protocol=TCP localport=80
+netsh advfirewall firewall add rule name="HTTPS" dir=in action=allow protocol=TCP localport=443
+Set-Service W3SVC -StartupType Automatic; Start-Service W3SVC
+Write-Host "IIS + ASP.NET 4.5 installed"`,
+
+  dotnet8: `# ── .NET 8 SDK + Runtime (from local share: dotnet8-installer.exe) ──
+# Source: https://dotnet.microsoft.com/download (copy to share)
+Install-FromISO "dotnet\\dotnet-sdk-8.0-win-x64.exe" "/install /quiet /norestart"
+Install-FromISO "dotnet\\dotnet-runtime-8.0-win-x64.exe" "/install /quiet /norestart"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+Write-Host ".NET 8 installed from local share"`,
+
+  dotnet6: `# ── .NET 6 LTS Runtime (from local share: dotnet6-runtime.exe) ──
+Install-FromISO "dotnet\\dotnet-runtime-6.0-win-x64.exe" "/install /quiet /norestart"
+Write-Host ".NET 6 LTS Runtime installed from local share"`,
+
+  // ════════════════════════════════════
+  //  DATABASES — from local share
+  // ════════════════════════════════════
+  sqlexpress: `# ── SQL Server 2022 Express (from local share) ───────────
+# Expected on share: SQLServer\SQL2022Express.exe
+# Download once: https://go.microsoft.com/fwlink/?linkid=2215160
+Install-FromISO "SQLServer\\SQL2022Express.exe" "/Q /Action=Install /Features=SQLEngine /InstanceName=SQLEXPRESS /TCPENABLED=1 /SQLSVCACCOUNT=NT AUTHORITY\NETWORK SERVICE /ASSYSADMINACCOUNTS=BUILTIN\Administrators /IACCEPTSQLSERVERLICENSETERMS"
+# Enable SQL Browser service
+Set-Service SQLBrowser -StartupType Automatic -ErrorAction SilentlyContinue
+Start-Service SQLBrowser -ErrorAction SilentlyContinue
+# Open firewall
+netsh advfirewall firewall add rule name="SQL Server 1433" dir=in action=allow protocol=TCP localport=1433
+netsh advfirewall firewall add rule name="SQL Browser 1434" dir=in action=allow protocol=UDP localport=1434
+Write-Host "SQL Server Express installed (SQLEXPRESS instance)"`,
+
+  ssms: `# ── SSMS (from local share: SSMS-Setup-ENU.exe) ──────────
+# Download once: https://aka.ms/ssmsfullsetup
+Install-FromISO "SQLServer\\SSMS-Setup-ENU.exe" "/Install /Quiet /NoRestart"
+Write-Host "SSMS installed from local share"`,
+
+  'mysql-win': `# ── MySQL 8 (from local share: MySQL installer MSI) ──────
+# Download once: https://dev.mysql.com/downloads/installer/
+# Expected on share: MySQL\mysql-installer-community-8.x.x.x.msi
+Install-FromISO "MySQL\\mysql-installer-community.msi" "/quiet /norestart INSTALLDIR=C:\MySQL"
+netsh advfirewall firewall add rule name="MySQL 3306" dir=in action=allow protocol=TCP localport=3306
+Write-Host "MySQL installed from local share"`,
+
+  'pg-win': `# ── PostgreSQL 16 (from local share: postgresql-16-windows-x64.exe) ──
+# Download once: https://www.enterprisedb.com/downloads/postgres-postgresql-downloads
+Install-FromISO "PostgreSQL\\postgresql-16-windows-x64.exe" "--mode unattended --superpassword Admin@123! --servicename postgresql-x64-16"
+netsh advfirewall firewall add rule name="PostgreSQL 5432" dir=in action=allow protocol=TCP localport=5432
+Write-Host "PostgreSQL 16 installed from local share"`,
+
+  redis_win: `# ── Redis for Windows (from local share: Redis-x64-*.msi) ──
+# Download once: https://github.com/microsoftarchive/redis/releases
+Install-FromISO "Redis\\Redis-x64.msi" "/quiet /norestart"
+netsh advfirewall firewall add rule name="Redis 6379" dir=in action=allow protocol=TCP localport=6379
+Write-Host "Redis installed from local share"`,
+
+  // ════════════════════════════════════
+  //  RUNTIMES — from local share
+  // ════════════════════════════════════
+  'python-win': `# ── Python 3.12 (from local share: python-3.12.x-amd64.exe) ──
+# Download once: https://www.python.org/downloads/windows/
+Install-FromISO "Python\\python-3.12-amd64.exe" "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+python --version
+Write-Host "Python 3.12 installed from local share"`,
+
+  'node-win': `# ── Node.js 20 LTS (from local share: node-v20.x.x-x64.msi) ──
+# Download once: https://nodejs.org/en/download/
+Install-FromISO "NodeJS\\node-v20-x64.msi" "/quiet /norestart"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+node --version && npm --version
+Write-Host "Node.js 20 LTS installed from local share"`,
+
+  java_win: `# ── Java 17 Temurin (from local share: OpenJDK17-jdk_x64_windows.msi) ──
+# Download once: https://adoptium.net/temurin/releases/
+Install-FromISO "Java\\OpenJDK17-jdk_x64_windows.msi" "/quiet /norestart ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+java -version
+Write-Host "Java 17 (Temurin) installed from local share"`,
+
+  git_win: `# ── Git for Windows (from local share: Git-x.x.x-64-bit.exe) ──
+# Download once: https://git-scm.com/download/win
+Install-FromISO "Git\\Git-64-bit.exe" "/VERYSILENT /NORESTART /NOCANCEL /SP- /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS /COMPONENTS=icons,ext\reg\shellhere,assoc,assoc_sh"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+git --version
+Write-Host "Git installed from local share"`,
+
+  docker_win: `# ── Docker Desktop (from local share: Docker Desktop Installer.exe) ──
+# Download once: https://docs.docker.com/desktop/install/windows-install/
+# Note: requires WSL2 — run WSL2 setup first if not installed
+Install-FromISO "Docker\\DockerDesktopInstaller.exe" "install --quiet --accept-license --backend=wsl-2"
+Write-Host "Docker Desktop installed from local share (reboot may be required)"`,
+
+  // ════════════════════════════════════
+  //  BUNDLES
+  // ════════════════════════════════════
+  'win-web': `# ── Web Platform Bundle (IIS + ASP.NET + SQL Express) ────
+# Step 1: IIS + ASP.NET — from local Windows image (no download)
+Install-WindowsFeature -Name Web-Server,Web-Asp-Net45,NET-Framework-45-Core,NET-Framework-45-ASPNET,Web-Net-Ext45,Web-ISAPI-Ext,Web-ISAPI-Filter,Web-Mgmt-Console -IncludeManagementTools
+netsh advfirewall firewall add rule name="HTTP"  dir=in action=allow protocol=TCP localport=80
+netsh advfirewall firewall add rule name="HTTPS" dir=in action=allow protocol=TCP localport=443
+# Step 2: SQL Server Express — from local share
+Install-FromISO "SQLServer\\SQL2022Express.exe" "/Q /Action=Install /Features=SQLEngine /InstanceName=SQLEXPRESS /TCPENABLED=1 /SQLSVCACCOUNT=NT AUTHORITY\NETWORK SERVICE /ASSYSADMINACCOUNTS=BUILTIN\Administrators /IACCEPTSQLSERVERLICENSETERMS"
+netsh advfirewall firewall add rule name="SQL 1433" dir=in action=allow protocol=TCP localport=1433
+Write-Host "Web Platform ready: IIS + ASP.NET + SQL Express"`,
+
+  'win-dotnet': `# ── .NET Stack Bundle (IIS + .NET 8 + Node.js) ───────────
+# Step 1: IIS — from local Windows image
+Install-WindowsFeature -Name Web-Server,Web-Asp-Net45,NET-Framework-45-Core,Web-Mgmt-Console -IncludeManagementTools
+netsh advfirewall firewall add rule name="HTTP" dir=in action=allow protocol=TCP localport=80
+# Step 2: .NET 8 — from local share
+Install-FromISO "dotnet\\dotnet-sdk-8.0-win-x64.exe" "/install /quiet /norestart"
+# Step 3: Node.js — from local share
+Install-FromISO "NodeJS\\node-v20-x64.msi" "/quiet /norestart"
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH","Machine")
+Write-Host ".NET Stack ready: IIS + .NET 8 + Node.js"`,
+
+  'win-db': `# ── Database Bundle (SQL Express + MySQL + PostgreSQL) ────
+# SQL Server Express from local share
+Install-FromISO "SQLServer\\SQL2022Express.exe" "/Q /Action=Install /Features=SQLEngine /InstanceName=SQLEXPRESS /TCPENABLED=1 /SQLSVCACCOUNT=NT AUTHORITY\NETWORK SERVICE /ASSYSADMINACCOUNTS=BUILTIN\Administrators /IACCEPTSQLSERVERLICENSETERMS"
+# MySQL from local share
+Install-FromISO "MySQL\\mysql-installer-community.msi" "/quiet /norestart"
+# PostgreSQL from local share
+Install-FromISO "PostgreSQL\\postgresql-16-windows-x64.exe" "--mode unattended --superpassword Admin@123! --servicename postgresql-x64-16"
+# Firewall
+netsh advfirewall firewall add rule name="SQL 1433"  dir=in action=allow protocol=TCP localport=1433
+netsh advfirewall firewall add rule name="MySQL 3306" dir=in action=allow protocol=TCP localport=3306
+netsh advfirewall firewall add rule name="PG 5432"    dir=in action=allow protocol=TCP localport=5432
+Write-Host "DB Bundle ready: SQL Express + MySQL + PostgreSQL"`,
+};
+
+const _paasOS = {};
+
+function selectOS(uid, os) {
+  _paasOS[uid] = os;
+  // Also sync the top-level guest OS selector
+  _guestOS[uid] = os;
+  const hiddenOsInput = document.getElementById(`os-type-${uid}`);
+  if (hiddenOsInput) hiddenOsInput.value = os;
+  const osSelBtns = document.getElementById(`os-sel-${uid}`);
+  if (osSelBtns) osSelBtns.querySelectorAll('.hv-btn').forEach(b => b.classList.toggle('active', b.dataset.os === os));
+
+  const wrapper = document.getElementById(`paas-${uid}`);
+  wrapper.querySelectorAll('.paas-os-btn').forEach(b => b.classList.toggle('active', b.dataset.os === os));
+  document.getElementById(`paas-linux-${uid}`).style.display   = os === 'linux'   ? '' : 'none';
+  document.getElementById(`paas-windows-${uid}`).style.display = os === 'windows' ? '' : 'none';
+  const hide = os === 'linux' ? 'windows' : 'linux';
+  document.querySelectorAll(`#paas-${hide}-${uid} .paas-check`).forEach(c => c.checked = false);
+  _syncOfflinePanel(uid);
+  buildScript(uid);
+}
+
+function buildScript(uid) {
+  const os    = _paasOS[uid] || 'linux';
+  const panel = document.getElementById(`paas-${os}-${uid}`);
+  const checks = panel.querySelectorAll('.paas-check:checked');
+
+  if (!checks.length) {
+    document.getElementById(`paas-script-wrap-${uid}`).style.display = 'none';
+    document.getElementById(`paas-empty-${uid}`).style.display = '';
+    const ta = document.getElementById(`paas-script-${uid}`);
+    if (ta) ta.value = '';
+    return;
+  }
+
+  const labels = [];
+  const script = os === 'linux'
+    ? buildLinuxScript(checks, labels, uid)
+    : buildWindowsScript(checks, labels, uid);
+
+  const tag = document.getElementById(`paas-tag-${uid}`);
+  if (tag) {
+    tag.textContent = os === 'linux' ? '\uD83D\uDC27 Linux (bash)' : '\uD83E\uDE9F Windows (PowerShell)';
+    tag.className = 'paas-tag ' + (os === 'linux' ? 'paas-tag-linux' : 'paas-tag-windows');
+  }
+
+  const ta = document.getElementById(`paas-script-${uid}`);
+  if (ta) { ta.value = script; ta.readOnly = true; }
+
+  const lbl = document.getElementById(`paas-script-label-${uid}`);
+  if (lbl) lbl.innerHTML = `<i class="bi bi-file-earmark-code me-1"></i>Generated: ${labels.join(', ')}`;
+
+  document.getElementById(`paas-script-wrap-${uid}`).style.display = '';
+  document.getElementById(`paas-empty-${uid}`).style.display = 'none';
+}
+
+function buildLinuxScript(checks, labels, uid) {
+  const toInstall = [], toEnable = [], extras = [], done = new Set();
+
+  checks.forEach(cb => {
+    const pkg    = cb.dataset.pkg;
+    const bundle = cb.dataset.bundle;
+    if (bundle && PAAS_BUNDLES[bundle]) {
+      PAAS_BUNDLES[bundle].pkgs.forEach(p => {
+        if (!done.has(p) && PAAS_LINUX[p]) {
+          done.add(p);
+          if (PAAS_LINUX[p].install) toInstall.push(PAAS_LINUX[p].install);
+          if (PAAS_LINUX[p].enable)  toEnable.push(PAAS_LINUX[p].enable);
+          if (PAAS_LINUX[p].extra)   extras.push(PAAS_LINUX[p].extra);
+        }
+      });
+      labels.push(PAAS_BUNDLES[bundle].label);
+    } else if (PAAS_LINUX[pkg] && !done.has(pkg)) {
+      done.add(pkg);
+      if (PAAS_LINUX[pkg].install) toInstall.push(PAAS_LINUX[pkg].install);
+      if (PAAS_LINUX[pkg].enable)  toEnable.push(PAAS_LINUX[pkg].enable);
+      if (PAAS_LINUX[pkg].extra)   extras.push(PAAS_LINUX[pkg].extra);
+      labels.push(cb.dataset.label || pkg);
+    }
+  });
+
+  // Read repo mount point from form (default: /iso = NFS mount 10.19.8.133:/repo/rhel9)
+  const card    = uid !== undefined
+                  ? document.querySelector(`.vmb-vm-card[data-uid="${uid}"]`)
+                  : null;
+  const repoRaw = card?.querySelector('[name="linux_repo_url"]')?.value.trim() || '/iso';
+
+  // Detect type: NFS/local path vs HTTP URL
+  const isPath = repoRaw.startsWith('/') || repoRaw.startsWith('file://');
+  const isHttp = repoRaw.startsWith('http') || repoRaw.startsWith('ftp');
+
+  const lines = [
+    '#!/bin/bash',
+    'set -e',
+    '',
+    '# =================================================================',
+    `# VMBuilDeR PaaS  —  ${labels.join(', ')}`,
+    '# Platform: Linux (RHEL / CentOS / Rocky)',
+    '# Offline mode: NFS repo 10.19.8.133:/repo/rhel9 mounted at /iso',
+    '# =================================================================',
+    '',
+    'echo "=== VMBuilDeR Post-Install Script ==="',
+    `echo "Components: ${labels.join(', ')}"`,
+    '',
+  ];
+
+  // ── Configure repo ──
+  if (isPath) {
+    lines.push(
+      '# ── Configure local repo from NFS/ISO mount point ───────────',
+      `REPO_PATH="${repoRaw}"`,
+      '',
+      '# Verify mount is accessible',
+      'if [ ! -d "$REPO_PATH" ]; then',
+      '    echo "ERROR: Repo path not accessible: $REPO_PATH"',
+      '    echo "For NFS: run  mount 10.19.8.133:/repo/rhel9 /iso"',
+      '    exit 1',
+      'fi',
+      '',
+      '# Backup existing repos and point yum at the local mount',
+      'mkdir -p /etc/yum.repos.d/backup',
+      'mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true',
+      '',
+      'cat > /etc/yum.repos.d/local.repo << \'EOF_REPO\'',
+      '[local-nfs]',
+      'name=Local NFS Repository (10.19.8.133:/repo/rhel9)',
+      `baseurl=file://${repoRaw}`,
+      'enabled=1',
+      'gpgcheck=0',
+      'module_hotfixes=1',
+      'EOF_REPO',
+      '',
+      `echo "Repo configured: file://${repoRaw}"`,
+      'yum clean all -q',
+      '',
+    );
+  } else if (isHttp) {
+    lines.push(
+      '# ── Configure HTTP repo server ───────────────────────────────',
+      'mkdir -p /etc/yum.repos.d/backup',
+      'mv /etc/yum.repos.d/*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true',
+      '',
+      'cat > /etc/yum.repos.d/local.repo << \'EOF_REPO\'',
+      '[local-http]',
+      'name=Local HTTP Repository',
+      `baseurl=${repoRaw}`,
+      'enabled=1',
+      'gpgcheck=0',
+      'module_hotfixes=1',
+      'EOF_REPO',
+      '',
+      `echo "Repo configured: ${repoRaw}"`,
+      'yum clean all -q',
+      '',
+    );
+  }
+
+  // ── Install packages ──
+  if (toInstall.length) {
+    const pkgList = [...new Set(toInstall.join(' ').split(' ').filter(Boolean))].join(' ');
+    lines.push(
+      `echo "Installing: ${pkgList}"`,
+      `yum install -y ${pkgList}`,
+      '',
+    );
+  }
+
+  // ── Extra commands ──
+  extras.filter(Boolean).forEach(e => { lines.push(e, ''); });
+
+  // ── Enable services ──
+  const svcs = [...new Set(toEnable.filter(Boolean))];
+  if (svcs.length) {
+    lines.push('echo "Enabling services..."');
+    svcs.forEach(s => lines.push(`systemctl enable --now ${s}`));
+    lines.push('');
+  }
+
+  lines.push(
+    `echo "✓ Done: ${labels.join(', ')}"`,
+    'echo "=== Installation Complete ==="',
+  );
+
+  return lines.join('\n');
+}
+
+
+function buildWindowsScript(checks, labels, uid) {
+  const card    = uid !== undefined
+                  ? document.querySelector('.vmb-vm-card[data-uid="' + uid + '"]')
+                  : null;
+  const isoPath = (card && card.querySelector('[name="win_iso_path"]'))
+                  ? card.querySelector('[name="win_iso_path"]').value.trim() : '';
+
+  const blocks = [];
+  checks.forEach(function(cb) {
+    const pkg = cb.dataset.pkg;
+    if (PAAS_WINDOWS[pkg]) { blocks.push(PAAS_WINDOWS[pkg]); labels.push(cb.dataset.label || pkg); }
+  });
+
+  const lines = [
+    '# ==========================================================',
+    '# VMBuilDeR PaaS  \u2014  ' + labels.join(', '),
+    '# Platform : Windows Server | Hyper-V Failover Cluster (HV-UCSX)',
+    '# Offline  : ISO mounted as DVD by Hyper-V playbook',
+    '# Updates  : WSUS handles Windows OS patches automatically',
+    '# ==========================================================',
+    '',
+    '$ErrorActionPreference = "Stop"',
+    'Write-Host "Starting offline platform installation..."',
+    '',
+    '# Windows Features use local Windows image (SxS) \u2014 no ISO needed',
+    '',
+    '# \u2500\u2500 Auto-detect the packages ISO DVD drive \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    '$dvdDrive = $null',
+    'Get-WmiObject Win32_CDROMDrive | ForEach-Object {',
+    '    if ($_.Drive -and (Test-Path ($_.Drive + "\\"))) { $dvdDrive = $_.Drive }',
+    '}',
+    'if (-not $dvdDrive) {',
+    '    foreach ($ltr in @("D:","E:","F:","G:")) {',
+    '        if (Test-Path "$ltr\\") { $dvdDrive = $ltr; break }',
+    '    }',
+    '}',
+    'Write-Host "Packages ISO drive: $dvdDrive"',
+    '',
+    '# \u2500\u2500 Installer helper: runs .exe/.msi from ISO \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500',
+    'function Install-FromISO {',
+    '    param([string]$RelPath, [string]$InstallArgs)',
+    '    $full = "$dvdDrive\\$RelPath"',
+    '    if (-not (Test-Path $full)) {',
+    '        Write-Warning "NOT FOUND on ISO: $full"',
+    '        Write-Warning "Add file to ISO: $RelPath"',
+    '        return',
+    '    }',
+    '    Write-Host "Installing $RelPath ..."',
+    '    $p = Start-Process $full -ArgumentList $InstallArgs -Wait -NoNewWindow -PassThru',
+    '    if ($p.ExitCode -notin @(0,3010,1641)) { Write-Warning "Exit code: $($p.ExitCode)" }',
+    '    else { Write-Host "Done: $RelPath" }',
+    '}',
+    '',
+  ];
+
+  blocks.forEach(function(block, i) {
+    lines.push('# \u2500\u2500 ' + labels[i] + ' ' + '\u2500'.repeat(Math.max(2, 50 - labels[i].length)));
+    lines = lines.concat(block.split('\n'));
+    lines.push('');
+  });
+
+  lines.push('Write-Host "\u2713 Platform ready: ' + labels.join(', ') + '"', '');
+  return lines.join('\n');
+}
+
+function toggleScriptEdit(uid) {
+  const ta  = document.getElementById(`paas-script-${uid}`);
+  const btn = document.getElementById(`paas-edit-btn-${uid}`);
+  if (!ta) return;
+  ta.readOnly = !ta.readOnly;
+  btn.innerHTML = ta.readOnly
+    ? '<i class="bi bi-pencil me-1"></i>Edit'
+    : '<i class="bi bi-lock me-1"></i>Lock';
+  ta.style.borderTop = ta.readOnly ? '' : '1px solid #a6e3a1';
+  if (!ta.readOnly) ta.focus();
+}
+
+function clearPlatform(uid) {
+  document.getElementById(`paas-${uid}`)
+          .querySelectorAll('.paas-check')
+          .forEach(c => c.checked = false);
+  document.getElementById(`paas-script-wrap-${uid}`).style.display = 'none';
+  document.getElementById(`paas-empty-${uid}`).style.display = '';
+  const ta = document.getElementById(`paas-script-${uid}`);
+  if (ta) ta.value = '';
+}
+
+// init
+addRow();
+</script>
+{% endblock %}

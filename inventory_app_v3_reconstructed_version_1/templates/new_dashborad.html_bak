@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>WE DataCenter | Global Infrastructure Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231a4a6e'%3E%3Cpath d='M4 19h16a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2zm0-8h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2z'/%3E%3C/svg%3E">
+    <link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
+    <link href="/static/vendor/inter-font/web/inter.css" rel="stylesheet">
+    <script src="/static/vendor/chartjs/dist/chart.umd.js"></script>
+    <style>
+        /* ----- BASE ----- */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* ----- LIGHT THEME (default) ----- */
+        :root {
+            --bg-body: #eef2fa;
+            --bg-card: #ffffff;
+            --bg-card-alt: #f8f9fc;
+            --bg-table-header: #eef2f7;
+            --bg-navbar: linear-gradient(135deg, #0b2b3f 0%, #1a4a6e 100%);
+            --bg-selection: #e8f0fe;
+            --text-primary: #1a2c3e;
+            --text-secondary: #4b5563;
+            --text-muted: #6b7280;
+            --border-color: #dee2e6;
+            --shadow-color: rgba(0,0,0,0.08);
+            --bg-resource-card: linear-gradient(135deg, #1a2c3e 0%, #0f2b3b 100%);
+            --bg-vcenter-tag: rgba(255,255,255,0.15);
+            --selected-row: #cfe2ff;
+            --selected-row-hover: #b6d4fe;
+            --footer-bg: #0d1117;
+            --footer-border: #21262d;
+            --footer-text: #f0f6fc;
+            --footer-text-muted: #6b7280;
+            --table-hover: #f0f6ff;
+            --progress-bg: #e2e8f0;
+        }
+
+        /* ----- DARK THEME ----- */
+        [data-theme="dark"] {
+            --bg-body: #0d1117;
+            --bg-card: #161b22;
+            --bg-card-alt: #1c2333;
+            --bg-table-header: #1c2333;
+            --bg-navbar: linear-gradient(135deg, #0d1117 0%, #1a2332 100%);
+            --bg-selection: #1c2333;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6b7280;
+            --border-color: #30363d;
+            --shadow-color: rgba(0,0,0,0.4);
+            --bg-resource-card: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+            --bg-vcenter-tag: rgba(255,255,255,0.08);
+            --selected-row: #1c3a5e;
+            --selected-row-hover: #1a4a6e;
+            --footer-bg: #0d1117;
+            --footer-border: #21262d;
+            --footer-text: #f0f6fc;
+            --footer-text-muted: #6b7280;
+            --table-hover: #1c2333;
+            --progress-bg: #30363d;
+        }
+
+        body {
+            background: var(--bg-body);
+            color: var(--text-primary);
+        }
+
+        /* ----- STICKY NAVBAR ----- */
+        .navbar {
+            background: var(--bg-navbar);
+            padding: 12px 24px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1050;
+            transition: background 0.3s ease;
+        }
+        .navbar-brand { color: white !important; font-weight: 700; font-size: 1.4rem; }
+        .nav-link {
+            color: rgba(255,255,255,0.85) !important;
+            transition: all 0.2s;
+            border-radius: 8px;
+            padding: 4px 10px;
+        }
+        .nav-link:hover {
+            color: white !important;
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-1px);
+        }
+
+        .theme-toggle-btn {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white !important;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.1rem;
+            margin-left: 8px;
+        }
+        .theme-toggle-btn:hover {
+            background: rgba(255,255,255,0.2);
+            transform: rotate(30deg);
+        }
+
+        /* ----- STICKY DASHBOARD HEADER ----- */
+        .dashboard-header {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 12px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            overflow-x: auto;
+            position: sticky;
+            top: 110px;
+            z-index: 1040;
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+        .container-fluid { padding: 20px 24px; }
+
+        .title-section h2 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin: 0;
+            white-space: nowrap;
+            color: var(--text-primary);
+        }
+        .title-section h2 .text-primary { color: var(--text-primary) !important; }
+
+        /* ----- BUTTONS ----- */
+        .btn-group-custom {
+            display: flex;
+            flex-wrap: nowrap;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+        .run-selector-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .run-selector-group .form-select-sm {
+            width: auto !important;
+            min-width: 140px;
+        }
+        .platform-filter {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+        .btn {
+            white-space: nowrap;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+        }
+        .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+        .btn-outline-primary {
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        .btn-outline-primary:hover {
+            background: var(--bg-card-alt);
+            color: var(--text-primary);
+        }
+
+        /* ----- RESOURCE SUMMARY CARDS ----- */
+        .resource-summary {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 28px;
+        }
+        .site-resource-card {
+            background: var(--bg-resource-card);
+            border-radius: 20px;
+            padding: 18px 22px;
+            color: white;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            transition: transform 0.28s ease, box-shadow 0.28s ease;
+        }
+        .site-resource-card:hover { transform: translateY(-5px); box-shadow: 0 18px 38px rgba(0,0,0,0.2); }
+        .site-resource-card h4 {
+            font-size: 1.2rem;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            padding-bottom: 10px;
+        }
+        .resource-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .resource-stat {
+            background: rgba(255,255,255,0.12);
+            border-radius: 16px;
+            padding: 10px 12px;
+            transition: all 0.2s;
+            cursor: default;
+        }
+        .resource-stat:hover { background: rgba(255,255,255,0.22); transform: scale(1.04); }
+        .resource-stat-label { font-size: 0.7rem; opacity: 0.75; margin-bottom: 4px; }
+        .resource-stat-value { font-size: 1.3rem; font-weight: 700; }
+
+        /* ----- VCENTER TAGS ----- */
+        .vcenter-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+        .vcenter-tag {
+            background: var(--bg-vcenter-tag);
+            padding: 3px 10px;
+            border-radius: 30px;
+            font-size: 0.65rem;
+            transition: all 0.15s;
+        }
+        .vcenter-tag:hover { transform: scale(1.08); background: rgba(255,255,255,0.28); }
+        .vcenter-tag.online { background: rgba(34,197,94,0.3); border-left: 2px solid #22c55e; }
+        .vcenter-tag.offline { background: rgba(239,68,68,0.2); border-left: 2px solid #ef4444; }
+        .vcenter-tag.hyperv { background: rgba(79,70,229,0.3); border-left: 2px solid #4f46e5; }
+
+        /* ----- SITE CARDS ----- */
+        .powerbi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .site-card {
+            background: var(--bg-card);
+            border-radius: 24px;
+            box-shadow: 0 8px 20px var(--shadow-color);
+            overflow: hidden;
+            transition: all 0.25s;
+            display: flex;
+            flex-direction: column;
+        }
+        .site-card:hover { transform: translateY(-5px); box-shadow: 0 22px 32px -10px var(--shadow-color); }
+        .site-header {
+            padding: 14px 16px 8px 16px;
+            border-bottom: 2px solid var(--border-color);
+            background: var(--bg-card);
+        }
+        .site-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: var(--text-primary);
+        }
+        .vc-badge {
+            background: var(--bg-card-alt);
+            border-radius: 40px;
+            padding: 3px 10px;
+            font-size: 0.65rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+        .mini-charts {
+            display: flex;
+            justify-content: space-around;
+            padding: 10px 8px;
+            gap: 8px;
+            background: var(--bg-card-alt);
+            border-bottom: 1px solid var(--border-color);
+        }
+        .mini-chart {
+            flex: 1;
+            text-align: center;
+        }
+        .mini-chart canvas { max-height: 70px; width: 100%; }
+        .mini-chart-label {
+            font-size: 0.6rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .mini-chart-value {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+        }
+
+        /* ----- VC TILES ----- */
+        .vcenter-list-compact { padding: 6px 12px 16px 12px; max-height: 380px; overflow-y: auto; }
+        .vc-tile {
+            background: var(--bg-card-alt);
+            border-radius: 16px;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid var(--border-color);
+            transition: all 0.2s;
+        }
+        .vc-tile:hover { box-shadow: 0 4px 18px var(--shadow-color); transform: translateX(3px); border-color: var(--border-color); }
+        .vc-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
+        .vc-name { font-weight: 700; font-size: 0.8rem; color: var(--text-primary); }
+        .stat-row { display: flex; gap: 10px; flex-wrap: wrap; font-size: 0.65rem; margin: 5px 0; }
+        .metric-chip {
+            background: var(--bg-card);
+            border-radius: 20px;
+            padding: 2px 8px;
+            border: 1px solid var(--border-color);
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        .progress-micro {
+            background: var(--progress-bg);
+            border-radius: 20px;
+            height: 5px;
+            width: 100%;
+            overflow: hidden;
+            margin: 5px 0 2px;
+        }
+        .progress-fill-micro {
+            height: 5px;
+            width: 0%;
+            border-radius: 20px;
+            transition: width 0.5s ease;
+        }
+        .sub-ratio {
+            font-size: 0.6rem;
+            background: var(--bg-card-alt);
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 30px;
+            margin-top: 4px;
+            color: var(--text-secondary);
+        }
+        .free-highlight { color: #22c55e; font-weight: 600; }
+
+        /* ----- SELECTION INFO ----- */
+        .selection-info {
+            background: var(--bg-selection);
+            border-radius: 20px;
+            padding: 10px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            transition: background 0.3s ease;
+        }
+        .selected-count { font-weight: 600; color: var(--text-primary); }
+        .clear-selection { cursor: pointer; color: #dc2626; font-size: 0.75rem; }
+
+        /* ----- GROUPED TABLES ----- */
+        .site-table-group {
+            background: var(--bg-card);
+            border-radius: 20px;
+            margin-bottom: 24px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+        .site-table-header {
+            padding: 12px 20px;
+            background: var(--bg-navbar);
+            color: white;
+            font-weight: 700;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            transition: background 0.3s ease;
+        }
+        .site-table-header .badge { background: rgba(255,255,255,0.2); font-size: 0.7rem; }
+        .table {
+            font-size: 0.7rem;
+            margin-bottom: 0;
+            color: var(--text-primary);
+        }
+        .site-table-group .table thead th {
+            position: sticky;
+            top: 0;
+            background-color: var(--bg-table-header);
+            z-index: 20;
+            box-shadow: inset 0 1px 0 var(--border-color), inset 0 -1px 0 var(--border-color);
+            color: var(--text-primary);
+            transition: background 0.3s ease;
+        }
+        .table thead th {
+            background: var(--bg-table-header);
+            color: var(--text-primary);
+            font-weight: 600;
+            padding: 8px 6px;
+            white-space: nowrap;
+            border-bottom: 2px solid var(--border-color);
+        }
+        .table tbody td { padding: 6px; vertical-align: middle; white-space: nowrap; }
+        .table tbody tr:hover { background: var(--table-hover) !important; }
+
+        .table tbody tr.selected {
+            background-color: var(--selected-row) !important;
+            border-left: 4px solid #0d6efd;
+            outline: 1px solid #0d6efd;
+        }
+        .table tbody tr.selected:hover {
+            background-color: var(--selected-row-hover) !important;
+        }
+        .table tbody tr.selected td {
+            background-color: transparent !important;
+        }
+
+        /* ----- PLATFORM FILTER BUTTONS ----- */
+        .platform-filter-btn {
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            background: transparent;
+        }
+        .platform-filter-btn:hover { background: var(--bg-card-alt); }
+        .platform-filter-btn.active {
+            background: #1a4a6e;
+            color: white;
+            box-shadow: 0 2px 8px rgba(26,74,110,0.28);
+        }
+
+        /* ----- SCRIPT PANEL ----- */
+        #script-panel { margin-bottom: 20px; }
+        #scriptOutput .ok { color: #3fb950; }
+        #scriptOutput .warn { color: #d29922; }
+        #scriptOutput .err { color: #f85149; }
+        #scriptOutput .info { color: #58a6ff; }
+        #refresh-btn.running { animation: btn-pulse 0.9s ease-in-out infinite alternate; }
+        @keyframes btn-pulse {
+            from { box-shadow: 0 0 0 0 rgba(220,38,38,0.4); }
+            to { box-shadow: 0 0 0 6px rgba(220,38,38,0); }
+        }
+
+        /* ----- FOOTER ----- */
+        .footer-note {
+            margin-top: 24px;
+            text-align: center;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            padding: 16px;
+            background: var(--bg-card);
+            border-radius: 16px;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        .loader-center { text-align: center; padding: 2rem; }
+
+        /* ----- RESPONSIVE ----- */
+        @media (max-width: 1100px) {
+            .powerbi-grid { grid-template-columns: repeat(2, 1fr); }
+            .resource-summary { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 700px) { .powerbi-grid { grid-template-columns: 1fr; } }
+        .form-select-sm, .btn-sm { font-size: 0.7rem; }
+        .form-select-sm { width: auto !important; min-width: 130px; }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/"><i class="bi bi-display me-2"></i>WE DataCenter</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="/"><i class="bi bi-speedometer2"></i> Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link" href="/hosts"><i class="bi bi-hdd-rack"></i> Hosts</a></li>
+                <li class="nav-item"><a class="nav-link" href="/clusters"><i class="bi bi-diagram-3"></i> Clusters</a></li>
+                <li class="nav-item"><a class="nav-link" href="/datastores"><i class="bi bi-device-hdd"></i> Datastores</a></li>
+                <li class="nav-item"><a class="nav-link" href="/vms"><i class="bi bi-cpu"></i> VMs</a></li>
+                <li class="nav-item"><a class="nav-link" href="/reporting"><i class="bi bi-cpu"></i> Reporting</a></li>
+                {% if session.role == "superadmin" %}
+                <li class="nav-item"><a class="nav-link" href="/admin"><i class="bi bi-shield-lock"></i> Admin</a></li>
+                {% endif %}
+                <li class="nav-item"><a class="nav-link" href="/logout"><i class="bi bi-box-arrow-right"></i> Logout</a></li>
+            </ul>
+            <div class="d-flex align-items-center">
+                <div class="ms-3 text-light small">
+                    <i class="bi bi-person-circle me-1"></i> {{ session.username }}
+                    {% if session.role == "superadmin" %}
+                        <span class="badge bg-danger ms-1">Super Admin</span>
+                    {% else %}
+                        <span class="badge bg-secondary ms-1">User</span>
+                    {% endif %}
+                </div>
+                <button class="theme-toggle-btn" id="themeToggle" title="Toggle Theme">
+                    <i class="bi bi-moon-fill" id="themeIcon"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid">
+    <div class="dashboard-header">
+        <div class="title-section">
+            <h2><i class="bi bi-display me-2 text-primary"></i>Global Infrastructure Dashboard</h2>
+        </div>
+        <div class="btn-group-custom">
+            <div class="run-selector-group">
+                <label class="text-muted small mb-0 fw-semibold text-nowrap me-1">Run:</label>
+                <select id="vmwareRunFilter" class="form-select form-select-sm">
+                    <option value="">Latest VMware Run</option>
+                </select>
+                <select id="hypervRunFilter" class="form-select form-select-sm">
+                    <option value="">Latest Hyper-V Run</option>
+                </select>
+            </div>
+            <div class="platform-filter">
+                <span class="platform-filter-btn" data-platform="all" onclick="setPlatformFilter('all')">All</span>
+                <span class="platform-filter-btn" data-platform="vmware" onclick="setPlatformFilter('vmware')">VMware</span>
+                <span class="platform-filter-btn" data-platform="hyperv" onclick="setPlatformFilter('hyperv')">Hyper-V</span>
+            </div>
+            <button class="btn btn-outline-primary btn-sm" onclick="navigateToPage('hosts', false)"><i class="bi bi-hdd-rack me-1"></i>Hosts</button>
+            <button class="btn btn-outline-success btn-sm" onclick="navigateToPage('clusters', false)"><i class="bi bi-diagram-3 me-1"></i>Clusters</button>
+            <button class="btn btn-outline-warning btn-sm" onclick="navigateToPage('datastores', false)"><i class="bi bi-device-hdd me-1"></i>Datastores</button>
+            <button class="btn btn-outline-info btn-sm" onclick="navigateToPage('vms', false)"><i class="bi bi-cpu me-1"></i>VMs</button>
+            <button class="btn btn-success btn-sm" onclick="exportTableToCSV()"><i class="bi bi-download me-1"></i>Export CSV</button>
+            {% if session.role == "superadmin" %}
+            <button class="btn btn-sm btn-danger" id="refresh-btn" onclick="runInventoryScript()"><i class="bi bi-arrow-clockwise me-1"></i>Refresh Inventory</button>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="selection-info" id="selectionInfo" style="display: none;">
+        <div><i class="bi bi-check-circle-fill text-primary"></i> <span id="selectedCount" class="selected-count">0</span> resource(s) selected</div>
+        <div class="clear-selection" onclick="clearAllSelections()"><i class="bi bi-x-circle"></i> Clear all</div>
+    </div>
+
+    {% if session.role == "superadmin" %}
+    <div id="script-panel" style="display:none;" class="mb-3">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header py-2 d-flex align-items-center justify-content-between" style="background:linear-gradient(90deg,#111827,#1f2937);">
+                <span class="text-white small fw-semibold"><i class="bi bi-terminal me-2"></i>Inventory Script Output</span>
+                <button class="btn btn-sm btn-link text-secondary p-0" onclick="document.getElementById('script-panel').style.display='none'"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="card-body p-0">
+                <div id="script-status" class="px-3 py-2 border-bottom small" style="background:#f8f9fa; display:none;"></div>
+                <pre id="scriptOutput" style="background:#0d1117;color:#e6edf3;margin:0;padding:16px;min-height:120px;max-height:320px;overflow-y:auto;font-size:12px;line-height:1.6;font-family:'Courier New',monospace;">
+<span style="color:#484f58;">Waiting for script output…</span></pre>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="resource-summary" id="resourceSummary">
+        <div class="site-resource-card">
+            <h4><i class="fas fa-cloud-upload-alt"></i> MAIN SITE - FREE RESOURCES</h4>
+            <div class="resource-stats">
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-microchip"></i> Free CPU Cores</div><div class="resource-stat-value" id="mainFreeCores">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-memory"></i> Free Memory</div><div class="resource-stat-value" id="mainFreeMemory">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-hdd"></i> Free Storage</div><div class="resource-stat-value" id="mainFreeStorage">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-desktop"></i> Total VMs Created and Working</div><div class="resource-stat-value" id="mainTotalVMs">-</div></div>
+            </div>
+            <div class="vcenter-tags" id="mainVcenterTags"></div>
+        </div>
+        <div class="site-resource-card">
+            <h4><i class="fas fa-shield-alt"></i> DR SITE - FREE RESOURCES</h4>
+            <div class="resource-stats">
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-microchip"></i> Free CPU Cores</div><div class="resource-stat-value" id="drFreeCores">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-memory"></i> Free Memory</div><div class="resource-stat-value" id="drFreeMemory">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-hdd"></i> Free Storage</div><div class="resource-stat-value" id="drFreeStorage">-</div></div>
+                <div class="resource-stat"><div class="resource-stat-label"><i class="fas fa-desktop"></i> Total VMs Created and Working</div><div class="resource-stat-value" id="drTotalVMs">-</div></div>
+            </div>
+            <div class="vcenter-tags" id="drVcenterTags"></div>
+        </div>
+    </div>
+
+    <div class="powerbi-grid" id="powerbiGrid">
+        <div class="loader-center">Loading infrastructure data...</div>
+    </div>
+
+    <div id="groupedTablesContainer"></div>
+
+    <div class="footer-note">
+        <i class="bi bi-building me-1"></i> WE DataCenter Team | Infrastructure & Automation | VMware vSphere &amp; Hyper-V | Ansible<br>
+        <i class="bi bi-cloud-check"></i> Built with Flask | Open for internal use | &copy; 2026<br>
+        <i class="bi bi-person-badge me-1"></i> Designed and developed by Mohamed Tharwat Gendy
+    </div>
+</div>
+
+<script src="/static/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script>
+(function() {
+    // ---------- SITE MAPPING (client-side) ----------
+    const SITE_MAP = {
+        "HX-VC": "B7", "CCB7": "B7", "UCSXD2-VC": "B7", "UCSXD1-VC": "B7",
+        "TE-HXCLOUD": "B7", "HVUCSX22": "B7",
+        "MXDR": "DR", "CCDR": "DR", "UCSXDR-VC": "DR",
+        "HVMXDR-CLUS": "DR", "HVDR-EXCHCLUS": "DR",
+        "TED": "B90",
+        "HPSM": "TESTDEV", "HUAWEI": "TESTDEV", "proxmox-test": "TESTDEV" ,
+        "HV-UCSX": "TESTDEV"
+    };
+    const SITE_VCENTERS = {
+        "B7":      ["HX-VC", "CCB7", "UCSXD2-VC", "UCSXD1-VC"],
+        "DR":      ["MXDR", "CCDR", "UCSXDR-VC"],
+        "B90":     ["TED"],
+        "TESTDEV": ["HPSM", "HUAWEI", "proxmox-test"]
+    };
+    const SITE_HYPERV = {
+        "B7":      ["TE-HXCLOUD", "HVUCSX22"],
+        "DR":      ["HVMXDR-CLUS", "HVDR-EXCHCLUS"],
+        "B90":     [],
+        "TESTDEV": ["HV-UCSX"]
+    };
+    const MAIN_SITE_VCENTERS = [...SITE_VCENTERS["B7"], ...SITE_VCENTERS["B90"], ...SITE_VCENTERS["TESTDEV"]];
+    const MAIN_SITE_HYPERV   = [...SITE_HYPERV["B7"],   ...SITE_HYPERV["TESTDEV"]];
+    const DR_SITE_VCENTERS   = SITE_VCENTERS["DR"];
+    const DR_SITE_HYPERV     = SITE_HYPERV["DR"];
+
+    let allData = [];
+    let selectedResources = new Set();
+    let currentPlatformFilter = "all";
+    let activeCharts = {};
+    let _chartQueue = [];
+
+    // ---------- THEME ----------
+    function toggleTheme() {
+        const html = document.documentElement;
+        const icon = document.getElementById('themeIcon');
+        if (html.getAttribute('data-theme') === 'dark') {
+            html.removeAttribute('data-theme');
+            localStorage.setItem('theme', 'light');
+            if (icon) icon.className = 'bi bi-moon-fill';
+        } else {
+            html.setAttribute('data-theme', 'dark');
+            localStorage.setItem('theme', 'dark');
+            if (icon) icon.className = 'bi bi-sun-fill';
+        }
+    }
+    function loadTheme() {
+        const saved = localStorage.getItem('theme');
+        const html = document.documentElement;
+        const icon = document.getElementById('themeIcon');
+        if (saved === 'dark') {
+            html.setAttribute('data-theme', 'dark');
+            if (icon) icon.className = 'bi bi-sun-fill';
+        } else {
+            html.removeAttribute('data-theme');
+            if (icon) icon.className = 'bi bi-moon-fill';
+        }
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+        loadTheme();
+        const btn = document.getElementById('themeToggle');
+        if (btn) btn.addEventListener('click', toggleTheme);
+    });
+
+    // ---------- HELPERS ----------
+    function toNum(v) { return (v === undefined || v === null) ? 0 : parseFloat(v) || 0; }
+    function formatTB(gb) { return (toNum(gb) / 1024).toFixed(1) + " TB"; }
+    function formatGB(gb) { return toNum(gb).toFixed(1) + " GB"; }
+    function formatGBorTB(gb) { return toNum(gb) > 1024 ? formatTB(gb) : formatGB(gb); }
+    function getColor(p) { const n = toNum(p); return n > 90 ? "#dc2626" : n > 70 ? "#f97316" : "#10b981"; }
+
+    // FIXED: single animation frame, no stagger, no per-bar setTimeout.
+    function animateProgressBars(container) {
+        const bars = (container || document).querySelectorAll('.progress-fill-micro[data-target-width]');
+        if (!bars.length) return;
+        requestAnimationFrame(() => {
+            for (let i = 0; i < bars.length; i++) {
+                bars[i].style.width = bars[i].dataset.targetWidth;
+            }
+        });
+    }
+
+    // FIXED: chart queue + batched instantiation with animation off.
+    function renderMiniChart(canvasId, total, used, unit) {
+        _chartQueue.push({ canvasId, total, used, unit });
+    }
+    function flushCharts() {
+        if (!_chartQueue.length) return;
+        const q = _chartQueue; _chartQueue = [];
+        requestAnimationFrame(() => {
+            for (const c of q) {
+                const canvas = document.getElementById(c.canvasId);
+                if (!canvas) continue;
+                if (activeCharts[c.canvasId]) activeCharts[c.canvasId].destroy();
+                activeCharts[c.canvasId] = new Chart(canvas.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: [''],
+                        datasets: [
+                            { label: 'Used', data: [c.used],           backgroundColor: '#ef4444', borderRadius: 4, barPercentage: 0.6 },
+                            { label: 'Free', data: [c.total - c.used], backgroundColor: '#10b981', borderRadius: 4, barPercentage: 0.6 }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        animation: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.raw.toFixed(1)} ${c.unit}` } }
+                        },
+                        scales: {
+                            x: { display: false },
+                            y: { beginAtZero: true, ticks: { font: { size: 7 }, callback: (v) => v.toFixed(0) }, grid: { color: '#e2e8f0' } }
+                        },
+                        layout: { padding: { top: 2, bottom: 2, left: 2, right: 2 } }
+                    }
+                });
+            }
+        });
+    }
+
+    window.setPlatformFilter = function(platform) {
+        currentPlatformFilter = platform;
+        document.querySelectorAll('.platform-filter-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.platform === platform);
+        });
+        refreshDisplay();
+    };
+
+    function getFilteredData(data) {
+        if (currentPlatformFilter === 'all') return data;
+        const cmp = currentPlatformFilter === 'vmware' ? 'vmware' : 'hyper-v';
+        return data.filter(row => row.platform && row.platform.toLowerCase() === cmp);
+    }
+
+    window.navigateToPage = function(page, allResources = true) {
+        let resources = [];
+        if (allResources) {
+            allData.forEach(row => {
+                if (row.resource_name && !resources.includes(row.resource_name))
+                    resources.push(row.resource_name);
+            });
+        } else {
+            if (selectedResources.size === 0) {
+                alert("Please select at least one resource.");
+                return;
+            }
+            resources = Array.from(selectedResources);
+        }
+        window.location.href = `/${page}?vcenter=${encodeURIComponent(resources.join(','))}`;
+    };
+
+    function updateSelectionInfo() {
+        const infoDiv = document.getElementById('selectionInfo');
+        const countSpan = document.getElementById('selectedCount');
+        if (infoDiv && countSpan) {
+            if (selectedResources.size > 0) {
+                infoDiv.style.display = 'flex';
+                countSpan.textContent = selectedResources.size;
+            } else {
+                infoDiv.style.display = 'none';
+            }
+        }
+    }
+
+    window.clearAllSelections = function() {
+        selectedResources.clear();
+        document.querySelectorAll('.resource-check').forEach(cb => { cb.checked = false; });
+        document.querySelectorAll('.table tbody tr').forEach(tr => tr.classList.remove('selected'));
+        updateSelectionInfo();
+    };
+
+    function attachCheckboxListeners() {
+        document.querySelectorAll('.resource-check').forEach(cb => {
+            cb.removeEventListener('change', handleCheckboxChange);
+            cb.addEventListener('change', handleCheckboxChange);
+        });
+    }
+    function handleCheckboxChange(e) {
+        const row = e.target.closest('tr');
+        if (e.target.checked) {
+            selectedResources.add(e.target.value);
+            if (row) row.classList.add('selected');
+        } else {
+            selectedResources.delete(e.target.value);
+            if (row) row.classList.remove('selected');
+        }
+        updateSelectionInfo();
+    }
+    function updateRowHighlights() {
+        document.querySelectorAll('.resource-check').forEach(cb => {
+            const row = cb.closest('tr');
+            if (cb.checked) { if (row) row.classList.add('selected'); }
+            else { if (row) row.classList.remove('selected'); }
+        });
+    }
+
+    window.exportTableToCSV = function() {
+        let exportData = getFilteredData(allData).filter(row => {
+            const n = row.resource_name;
+            return MAIN_SITE_VCENTERS.includes(n) || MAIN_SITE_HYPERV.includes(n) ||
+                   DR_SITE_VCENTERS.includes(n) || DR_SITE_HYPERV.includes(n);
+        });
+        if (!exportData.length) { alert("No data to export"); return; }
+        let csv = [["Platform","Site","Resource Name","IP","Clusters","Hosts","Datastores","VMs",
+                    "Total CPU","Used CPU","Free CPU","Total Memory(TB)","Used Memory(TB)","Free Memory(TB)",
+                    "Total Storage(TB)","Used Storage(TB)","Free Storage(TB)","CPU %","Memory %","Storage %",
+                    "Sub CPU","Sub Memory","Sub Storage"]];
+        exportData.forEach(row => {
+            const n = row.resource_name;
+            const site = (MAIN_SITE_VCENTERS.includes(n) || MAIN_SITE_HYPERV.includes(n)) ? "MAIN SITE"
+                       : (DR_SITE_VCENTERS.includes(n) || DR_SITE_HYPERV.includes(n)) ? "DR SITE" : null;
+            if (!site) return;
+            csv.push([
+                row.platform || "Unknown", site, n, row.ip_vcenter || "-",
+                row.num_clusters || 0, row.num_hosts || 0, row.num_datastores || 0, row.num_vms || 0,
+                row.total_cores || 0, row.used_cores || 0, row.free_cores || 0,
+                (row.total_memory_gb/1024).toFixed(1), (row.used_memory_gb/1024).toFixed(1), (row.free_memory_gb/1024).toFixed(1),
+                (row.total_storage_gb/1024).toFixed(1), (row.used_storage_gb/1024).toFixed(1), (row.free_storage_gb/1024).toFixed(1),
+                (row.cpu_usage_percent?.toFixed(1) || "0") + "%",
+                (row.memory_usage_percent?.toFixed(1) || "0") + "%",
+                (row.storage_usage_percent?.toFixed(1) || "0") + "%",
+                row.subscription_cpu_ratio || 'N/A',
+                row.subscription_memory_ratio || 'N/A',
+                row.subscription_storage_ratio || 'N/A'
+            ]);
+        });
+        const blob = new Blob([csv.map(r => r.join(",")).join("\n")], { type: "text/csv" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "infrastructure_export.csv";
+        link.click();
+        URL.revokeObjectURL(link.href);
+    };
+
+    function updateResourceSummary(data) {
+        const filteredData = getFilteredData(data);
+        let mainFreeCores = 0, mainFreeMemoryGB = 0, mainFreeStorageGB = 0, mainTotalVMs = 0;
+        let drFreeCores = 0, drFreeMemoryGB = 0, drFreeStorageGB = 0, drTotalVMs = 0;
+        let mainResources = [], drResources = [];
+
+        filteredData.forEach(row => {
+            const siteName = (row.site_name || '').toUpperCase();
+            if (siteName === 'B7' || siteName === 'B90' || siteName === 'TESTDEV') {
+                mainResources.push({name: row.resource_name, platform: row.platform});
+                mainFreeCores += toNum(row.free_cores);
+                mainFreeMemoryGB += toNum(row.free_memory_gb);
+                mainFreeStorageGB += toNum(row.free_storage_gb);
+                mainTotalVMs += toNum(row.num_vms);
+            } else if (siteName === 'DR') {
+                drResources.push({name: row.resource_name, platform: row.platform});
+                drFreeCores += toNum(row.free_cores);
+                drFreeMemoryGB += toNum(row.free_memory_gb);
+                drFreeStorageGB += toNum(row.free_storage_gb);
+                drTotalVMs += toNum(row.num_vms);
+            }
+        });
+
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setText("mainFreeCores", mainFreeCores.toLocaleString());
+        setText("mainFreeMemory", formatTB(mainFreeMemoryGB));
+        setText("mainFreeStorage", formatTB(mainFreeStorageGB));
+        setText("mainTotalVMs", mainTotalVMs.toLocaleString());
+        setText("drFreeCores", drFreeCores.toLocaleString());
+        setText("drFreeMemory", formatTB(drFreeMemoryGB));
+        setText("drFreeStorage", formatTB(drFreeStorageGB));
+        setText("drTotalVMs", drTotalVMs.toLocaleString());
+
+        const buildTags = (vcList, hvList, resources) => {
+            const parts = [];
+            vcList.forEach((vc, i) => {
+                const found = resources.find(r => r.name === vc);
+                const cls = found ? 'online' : 'offline';
+                const icon = found ? 'fa-check-circle' : 'fa-circle-exclamation';
+                parts.push(`<span class="vcenter-tag ${cls}" style="animation-delay:${i * 0.04}s"><i class="fas ${icon}"></i> ${vc}</span>`);
+            });
+            hvList.forEach((hv, i) => {
+                const found = resources.find(r => r.name === hv);
+                const cls = found ? 'online' : 'offline';
+                parts.push(`<span class="vcenter-tag hyperv ${cls}" style="animation-delay:${(vcList.length + i) * 0.04}s"><i class="fab fa-windows"></i> ${hv}</span>`);
+            });
+            return parts.join('');
+        };
+        const mainTags = document.getElementById("mainVcenterTags");
+        const drTags = document.getElementById("drVcenterTags");
+        if (mainTags) mainTags.innerHTML = buildTags(MAIN_SITE_VCENTERS, MAIN_SITE_HYPERV, mainResources);
+        if (drTags) drTags.innerHTML = buildTags(DR_SITE_VCENTERS, DR_SITE_HYPERV, drResources);
+    }
+
+    function getDisplaySite(siteName) {
+        const map = { B7: 'B7 Cloud', DR: 'DR Cloud', B90: 'B90 Cloud', TESTDEV: 'Test & Dev' };
+        return map[siteName] || siteName;
+    }
+
+    function buildPowerBICards(data) {
+        const filteredData = getFilteredData(data);
+        const siteGroups = {
+            "B7 Cloud":   { items: [], totalCpu: 0, usedCpu: 0, totalMemGB: 0, usedMemGB: 0, totalStorGB: 0, usedStorGB: 0 },
+            "DR Cloud":   { items: [], totalCpu: 0, usedCpu: 0, totalMemGB: 0, usedMemGB: 0, totalStorGB: 0, usedStorGB: 0 },
+            "B90 Cloud":  { items: [], totalCpu: 0, usedCpu: 0, totalMemGB: 0, usedMemGB: 0, totalStorGB: 0, usedStorGB: 0 },
+            "Test & Dev": { items: [], totalCpu: 0, usedCpu: 0, totalMemGB: 0, usedMemGB: 0, totalStorGB: 0, usedStorGB: 0 }
+        };
+        filteredData.forEach(row => {
+            const d = getDisplaySite(row.site_name);
+            if (siteGroups[d]) {
+                siteGroups[d].items.push(row);
+                siteGroups[d].totalCpu += toNum(row.total_cores);
+                siteGroups[d].usedCpu += toNum(row.used_cores);
+                siteGroups[d].totalMemGB += toNum(row.total_memory_gb);
+                siteGroups[d].usedMemGB += toNum(row.used_memory_gb);
+                siteGroups[d].totalStorGB += toNum(row.total_storage_gb);
+                siteGroups[d].usedStorGB += toNum(row.used_storage_gb);
+            }
+        });
+        const siteIcons = {
+            "B7 Cloud": "fas fa-cloud-upload-alt",
+            "DR Cloud": "fas fa-shield-alt",
+            "B90 Cloud": "fas fa-database",
+            "Test & Dev": "fas fa-flask"
+        };
+        const siteColors = {
+            "B7 Cloud": "#1f6392", "DR Cloud": "#2c6e9e",
+            "B90 Cloud": "#0f5c6b", "Test & Dev": "#8b5cf6"
+        };
+
+        const cardParts = [];
+        for (const [siteName, siteData] of Object.entries(siteGroups)) {
+            const usedCpuPct = siteData.totalCpu ? (siteData.usedCpu / siteData.totalCpu * 100) : 0;
+            const usedMemPct = siteData.totalMemGB ? (siteData.usedMemGB / siteData.totalMemGB * 100) : 0;
+            const usedStorPct = siteData.totalStorGB ? (siteData.usedStorGB / siteData.totalStorGB * 100) : 0;
+
+            const tileParts = [];
+            siteData.items.forEach((row) => {
+                const platform = row.platform;
+                const cpuPerc = toNum(row.cpu_usage_percent);
+                const memPerc = toNum(row.memory_usage_percent);
+                const storagePerc = toNum(row.storage_usage_percent);
+                const badge = platform === 'VMware' ?
+                    '<span class="platform-badge platform-vmware">VMware</span>' :
+                    '<span class="platform-badge platform-hyperv">Hyper-V</span>';
+                const icon = platform === 'VMware' ? 'fa-microchip' : 'fa-windows';
+                tileParts.push(`
+                    <div class="vc-tile">
+                        <div class="vc-header">
+                            <span class="vc-name"><i class="fas ${icon}"></i> ${row.resource_name} ${badge}</span>
+                            <span class="metric-chip">${toNum(row.num_vms)} VMs</span>
+                        </div>
+                        <div class="stat-row">
+                            <span><i class="fas fa-cubes"></i> Cores: ${toNum(row.used_cores)}/${toNum(row.total_cores)} | <span class="free-highlight">Free: ${toNum(row.free_cores)}</span></span>
+                            <span><i class="fas fa-memory"></i> RAM: ${formatGBorTB(row.used_memory_gb)}/${formatGBorTB(row.total_memory_gb)} | <span class="free-highlight">Free: ${formatGBorTB(row.free_memory_gb)}</span></span>
+                            <span><i class="fas fa-hdd"></i> Storage: ${formatGBorTB(row.used_storage_gb)}/${formatGBorTB(row.total_storage_gb)} | <span class="free-highlight">Free: ${formatGBorTB(row.free_storage_gb)}</span></span>
+                        </div>
+                        <div>CPU ${cpuPerc.toFixed(1)}%</div>
+                        <div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(cpuPerc)};" data-target-width="${Math.min(100,cpuPerc)}%"></div></div>
+                        <div>Memory ${memPerc.toFixed(1)}%</div>
+                        <div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(memPerc)};" data-target-width="${Math.min(100,memPerc)}%"></div></div>
+                        <div>Storage ${storagePerc.toFixed(1)}%</div>
+                        <div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(storagePerc)};" data-target-width="${Math.min(100,storagePerc)}%"></div></div>
+                        <div class="stat-row">
+                            <span class="sub-ratio">Free Cores: ${toNum(row.free_cores)}</span>
+                            <span class="sub-ratio">Free RAM: ${formatGBorTB(row.free_memory_gb)}</span>
+                            <span class="sub-ratio">Free Storage: ${formatTB(row.free_storage_gb)}</span>
+                        </div>
+                    </div>`);
+            });
+
+            const safeSiteId = siteName.replace(/\s/g, '');
+            cardParts.push(`
+                <div class="site-card">
+                    <div class="site-header">
+                        <div class="site-title">
+                            <span><i class="${siteIcons[siteName]}" style="color:${siteColors[siteName]};"></i> ${siteName}</span>
+                            <div class="vc-badge">${siteData.items.length} Resources</div>
+                        </div>
+                        <div style="font-size:0.65rem;margin-top:5px;">Avg: CPU ${usedCpuPct.toFixed(1)}% / RAM ${usedMemPct.toFixed(1)}% / Storage ${usedStorPct.toFixed(1)}%</div>
+                    </div>
+                    <div class="mini-charts">
+                        <div class="mini-chart">
+                            <canvas id="cpu-${safeSiteId}"></canvas>
+                            <div class="mini-chart-label">CPU (cores)</div>
+                            <div class="mini-chart-value">${siteData.usedCpu} / ${siteData.totalCpu}</div>
+                        </div>
+                        <div class="mini-chart">
+                            <canvas id="mem-${safeSiteId}"></canvas>
+                            <div class="mini-chart-label">Memory (TB)</div>
+                            <div class="mini-chart-value">${(siteData.usedMemGB/1024).toFixed(1)} / ${(siteData.totalMemGB/1024).toFixed(1)}</div>
+                        </div>
+                        <div class="mini-chart">
+                            <canvas id="stor-${safeSiteId}"></canvas>
+                            <div class="mini-chart-label">Storage (TB)</div>
+                            <div class="mini-chart-value">${(siteData.usedStorGB/1024).toFixed(1)} / ${(siteData.totalStorGB/1024).toFixed(1)}</div>
+                        </div>
+                    </div>
+                    <div class="vcenter-list-compact">${tileParts.join('') || '<div class="text-center p-3 text-muted">No resources available</div>'}</div>
+                </div>`);
+        }
+        const grid = document.getElementById("powerbiGrid");
+        if (grid) grid.innerHTML = cardParts.join('');
+
+        // Queue all 12 charts, then instantiate them in one batched frame.
+        for (const [siteName, siteData] of Object.entries(siteGroups)) {
+            const safeId = siteName.replace(/\s/g, '');
+            renderMiniChart(`cpu-${safeId}`,  siteData.totalCpu,    siteData.usedCpu,    'cores');
+            renderMiniChart(`mem-${safeId}`,  siteData.totalMemGB,  siteData.usedMemGB,  'GB');
+            renderMiniChart(`stor-${safeId}`, siteData.totalStorGB, siteData.usedStorGB, 'GB');
+        }
+
+        animateProgressBars(grid);
+        flushCharts();
+        attachCheckboxListeners();
+        updateRowHighlights();
+    }
+
+    function renderGroupedTables(data) {
+        const filteredData = getFilteredData(data);
+        const siteOrder = ["B7 Cloud", "DR Cloud", "B90 Cloud", "Test & Dev"];
+        const siteIcons = {
+            "B7 Cloud": "fas fa-cloud-upload-alt",
+            "DR Cloud": "fas fa-shield-alt",
+            "B90 Cloud": "fas fa-database",
+            "Test & Dev": "fas fa-flask"
+        };
+        const siteGroups = { "B7 Cloud": [], "DR Cloud": [], "B90 Cloud": [], "Test & Dev": [] };
+        filteredData.forEach(row => {
+            const d = getDisplaySite(row.site_name);
+            if (siteGroups[d]) siteGroups[d].push(row);
+        });
+        const tableParts = [];
+        for (const siteName of siteOrder) {
+            if (!siteGroups[siteName].length) continue;
+            const rowParts = [];
+            siteGroups[siteName].forEach((row) => {
+                const platform = row.platform;
+                const cpuPerc = toNum(row.cpu_usage_percent);
+                const memPerc = toNum(row.memory_usage_percent);
+                const storagePerc = toNum(row.storage_usage_percent);
+                const badge = platform === 'VMware' ?
+                    '<span class="platform-badge platform-vmware">VMware</span>' :
+                    '<span class="platform-badge platform-hyperv">Hyper-V</span>';
+                const isChecked = selectedResources.has(row.resource_name) ? 'checked' : '';
+                rowParts.push(`<tr>
+                    <td><input type="checkbox" class="resource-check" value="${row.resource_name}" ${isChecked}></td>
+                    <td><b>${row.resource_name}</b> ${badge}</td>
+                    <td>${row.ip_vcenter || '-'}</td>
+                    <td>${toNum(row.num_clusters)}</td>
+                    <td>${toNum(row.num_hosts)}</td>
+                    <td>${toNum(row.num_datastores)}</td>
+                    <td>${toNum(row.num_vms)}</td>
+                    <td>${toNum(row.total_cores)}</td>
+                    <td>${toNum(row.used_cores)}<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(cpuPerc)};" data-target-width="${Math.min(100,cpuPerc)}%"></div></div></td>
+                    <td class="free-highlight">${toNum(row.free_cores)}</td>
+                    <td>${cpuPerc.toFixed(1)}%</td>
+                    <td>${row.subscription_cpu_ratio || 'N/A'}</td>
+                    <td>${formatGBorTB(row.total_memory_gb)}</td>
+                    <td>${formatGBorTB(row.used_memory_gb)}<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(memPerc)};" data-target-width="${Math.min(100,memPerc)}%"></div></div></td>
+                    <td class="free-highlight">${formatGBorTB(row.free_memory_gb)}</td>
+                    <td>${memPerc.toFixed(1)}%</td>
+                    <td>${row.subscription_memory_ratio || 'N/A'}</td>
+                    <td>${formatTB(row.total_storage_gb)}</td>
+                    <td>${formatTB(row.used_storage_gb)}<div class="progress-micro"><div class="progress-fill-micro" style="width:0;background:${getColor(storagePerc)};" data-target-width="${Math.min(100,storagePerc)}%"></div></div></td>
+                    <td class="free-highlight">${formatTB(row.free_storage_gb)}</td>
+                    <td>${storagePerc.toFixed(1)}%</td>
+                    <td>${row.subscription_storage_ratio || 'N/A'}</td>
+                </tr>`);
+            });
+            tableParts.push(`
+                <div class="site-table-group">
+                    <div class="site-table-header">
+                        <i class="${siteIcons[siteName]}" style="color:white;"></i>
+                        ${siteName}
+                        <span class="badge">${siteGroups[siteName].length} Resources</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-bordered">
+                            <thead>
+                                <tr><th>Select</th>
+                                <th>Resource</th>
+                                <th>IP</th>
+                                <th>Clusters</th>
+                                <th>Hosts</th>
+                                <th>Datastores</th>
+                                <th>VMs</th>
+                                <th>Total CPU</th>
+                                <th>Used CPU</th>
+                                <th>Free CPU</th>
+                                <th>CPU %</th>
+                                <th>Sub CPU</th>
+                                <th>Total Memory</th>
+                                <th>Used Memory</th>
+                                <th>Free Memory</th>
+                                <th>Memory %</th>
+                                <th>Sub Memory</th>
+                                <th>Total Storage</th>
+                                <th>Used Storage</th>
+                                <th>Free Storage</th>
+                                <th>Storage %</th>
+                                <th>Sub Storage</th></tr>
+                            </thead>
+                            <tbody>${rowParts.join('')}</tbody>
+                        </table>
+                    </div>
+                </div>`);
+        }
+        const container = document.getElementById("groupedTablesContainer");
+        if (container) container.innerHTML = tableParts.join('') || '<div class="text-center py-4">No data available</div>';
+        animateProgressBars(container);
+        attachCheckboxListeners();
+        updateRowHighlights();
+    }
+
+    function loadRuns() {
+        return fetch("/api/unified/runs")
+            .then(res => res.json())
+            .then(data => {
+                const vmSel = document.getElementById("vmwareRunFilter");
+                const hvSel = document.getElementById("hypervRunFilter");
+                if (data.runs && Array.isArray(data.runs)) {
+                    const vmRuns = data.runs.filter(r => r.platform === 'VMware');
+                    const hvRuns = data.runs.filter(r => r.platform === 'Hyper-V');
+                    if (vmSel) vmSel.innerHTML = '<option value="">Latest VMware Run</option>' + vmRuns.map(r => `<option value="${r.run_id}">Run ${r.run_id} - ${r.run_timestamp || 'N/A'}</option>`).join('');
+                    if (hvSel) hvSel.innerHTML = '<option value="">Latest Hyper-V Run</option>' + hvRuns.map(r => `<option value="${r.run_id}">Run ${r.run_id} - ${r.run_timestamp || 'N/A'}</option>`).join('');
+                    if (vmSel) vmSel.onchange = () => loadUnifiedSiteData();
+                    if (hvSel) hvSel.onchange = () => loadUnifiedSiteData();
+                }
+            })
+            .catch(err => console.error("Failed to load runs:", err));
+    }
+
+    function loadUnifiedSiteData() {
+        const selectedVmwareRun = document.getElementById("vmwareRunFilter")?.value;
+        const selectedHypervRun = document.getElementById("hypervRunFilter")?.value;
+        const gridDiv  = document.getElementById("powerbiGrid");
+        const tableDiv = document.getElementById("groupedTablesContainer");
+        if (gridDiv)  gridDiv.innerHTML  = '<div class="loader-center"><i class="fas fa-spinner fa-pulse fa-2x"></i><p>Loading infrastructure data…</p></div>';
+        if (tableDiv) tableDiv.innerHTML = '<div class="text-center py-4"><i class="fas fa-spinner fa-pulse"></i> Loading tables…</div>';
+
+        const params = [];
+        if (selectedVmwareRun) params.push(`run_id_vmware=${encodeURIComponent(selectedVmwareRun)}`);
+        if (selectedHypervRun) params.push(`run_id_hyperv=${encodeURIComponent(selectedHypervRun)}`);
+        const url = '/api/dashboard_sites' + (params.length ? '?' + params.join('&') : '');
+
+        fetch(url)
+            .then(res => res.json())
+            .then(payload => {
+                allData = [];
+                (payload.vmware || []).forEach(row => {
+                    const site = SITE_MAP[row.resource_name];
+                    if (site) { row.site_name = site; allData.push(row); }
+                });
+                (payload.hyperv || []).forEach(row => {
+                    const site = SITE_MAP[row.resource_name];
+                    if (site) { row.site_name = site; allData.push(row); }
+                });
+                updateResourceSummary(allData);
+                buildPowerBICards(allData);
+                renderGroupedTables(allData);
+            })
+            .catch(err => {
+                console.error("Error loading dashboard data:", err);
+                if (gridDiv)  gridDiv.innerHTML  = `<div class="text-center py-4 text-danger">Failed to load: ${err.message}</div>`;
+                if (tableDiv) tableDiv.innerHTML = '<div class="text-center py-4 text-danger">Failed to load data</div>';
+            });
+    }
+
+    function refreshDisplay() {
+        if (allData.length) {
+            updateResourceSummary(allData);
+            buildPowerBICards(allData);
+            renderGroupedTables(allData);
+        }
+    }
+
+    {% if session.role == "superadmin" %}
+    window.runInventoryScript = async function() {
+        const btn = document.getElementById('refresh-btn');
+        const panel = document.getElementById('script-panel');
+        const output = document.getElementById('scriptOutput');
+        const statusDiv = document.getElementById('script-status');
+        if (!panel || !output) return;
+        panel.style.display = 'block';
+        if (btn) { btn.disabled = true; btn.classList.add('running'); btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Running…'; }
+        output.innerHTML = '<span style="color:#58a6ff;">▶ Starting inventory collection…</span>\n';
+        if (statusDiv) { statusDiv.style.display = 'block'; statusDiv.innerHTML = '<div class="d-flex align-items-center gap-2 text-muted"><div class="spinner-border spinner-border-sm text-primary"></div><span>Running inventory script...</span></div>'; }
+        const t0 = Date.now();
+        const esc = s => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        try {
+            const res = await fetch('/api/run_script', { method: 'POST' });
+            const data = await res.json();
+            const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+            if (data.status === 'success') {
+                let out = esc(data.stdout)
+                    .replace(/(ok=\d+)/g, '<span class="ok">$1</span>')
+                    .replace(/(ERROR|CRITICAL)/g, '<span class="err">$1</span>')
+                    .replace(/(WARNING)/g, '<span class="warn">$1</span>')
+                    .replace(/(INFO|Running)/g, '<span class="info">$1</span>');
+                output.innerHTML = `<span class="info">▶ Finished in ${elapsed}s (exit: ${data.returncode})</span>\n\n` + (out || '<span style="color:#484f58;">(no output)</span>') + (data.stderr ? '\n<span class="warn">─── STDERR ───</span>\n' + esc(data.stderr) : '');
+                if (statusDiv) statusDiv.innerHTML = data.returncode === 0 ? `<div class="d-flex align-items-center gap-2 text-success"><i class="bi bi-check-circle-fill"></i><span>Updated in <strong>${elapsed}s</strong>.</span><button class="btn btn-sm btn-outline-success ms-auto" onclick="location.reload()"><i class="bi bi-arrow-clockwise me-1"></i>Reload</button></div>` : `<div class="text-warning small">Exit code ${data.returncode}</div>`;
+            } else {
+                output.innerHTML = `<span class="err">✕ ${esc(data.error || 'Unknown error')}</span>`;
+                if (statusDiv) statusDiv.innerHTML = '<div class="text-danger small">Script failed.</div>';
+            }
+        } catch (err) {
+            output.innerHTML = `<span class="err">✕ Request failed: ${esc(err.message)}</span>`;
+            if (statusDiv) statusDiv.innerHTML = '<div class="text-danger small">Could not reach server.</div>';
+        } finally {
+            if (btn) { btn.disabled = false; btn.classList.remove('running'); btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i>Refresh Inventory'; }
+            output.scrollTop = output.scrollHeight;
+        }
+    };
+    {% endif %}
+
+    window.addEventListener("DOMContentLoaded", () => {
+        const allBtn = document.querySelector('.platform-filter-btn[data-platform="all"]');
+        if (allBtn) allBtn.classList.add('active');
+        loadRuns().then(() => loadUnifiedSiteData());
+    });
+})();
+</script>
+</body>
+</html>

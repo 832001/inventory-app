@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Chat — Infra &amp; Docs</title>
+<meta name="csrf-token" content="{{ csrf_token() }}">
+<link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.css">
+<link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+    :root{
+        --bg:#f5f6fa; --bg2:#fff; --bg3:#f0f1f7;
+        --border:#e2e4ee; --border2:#d0d3e4;
+        --accent:#3b6ef8; --accent2:#22c55e; --warn:#f59e0b; --red:#ef4444;
+        --text:#1a1d2e; --text2:#4b5068; --muted:#8b91a8;
+        --shadow:0 1px 3px rgba(0,0,0,.07),0 1px 2px rgba(0,0,0,.05);
+        --shadow2:0 4px 12px rgba(0,0,0,.08);
+        --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif;
+        --user-bg:#eff4ff; --user-border:#c7d7fd; --ai-bg:#fff;
+        --docs-accent:#7c3aed; --docs-accent2:#a855f7;
+        --docs-bg:#faf5ff; --docs-border:#ddd6fe;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px}
+
+    /* ── MODE SWITCHER ── */
+    .mode-bar{
+        display:flex;align-items:center;gap:8px;
+        padding:8px 20px;background:var(--bg2);
+        border-bottom:1px solid var(--border);
+        box-shadow:var(--shadow);
+    }
+    .mode-btn{
+        font-family:var(--sans);font-size:12.5px;font-weight:600;
+        padding:6px 16px;border-radius:8px;border:1px solid var(--border);
+        background:transparent;color:var(--text2);cursor:pointer;
+        transition:all .15s;display:inline-flex;align-items:center;gap:6px;
+    }
+    .mode-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--user-bg)}
+    .mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);
+        box-shadow:0 2px 8px rgba(59,110,248,.25)}
+    .mode-btn.active.docs{background:var(--docs-accent);border-color:var(--docs-accent);
+        box-shadow:0 2px 8px rgba(124,58,237,.25)}
+
+    .shell{display:flex;height:calc(100vh - 44px);overflow:hidden}
+
+    /* ── SIDEBAR ── */
+    .sb{width:240px;background:var(--bg2);border-right:1px solid var(--border);
+        display:flex;flex-direction:column;padding:12px;gap:1px;flex-shrink:0;box-shadow:var(--shadow)}
+    .sb-logo{display:flex;align-items:center;gap:9px;padding:4px 4px 14px;
+        border-bottom:1px solid var(--border);margin-bottom:10px}
+    .sb-logo-icon{width:32px;height:32px;border-radius:9px;display:flex;
+        align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+    .sb-logo-icon.infra{background:linear-gradient(135deg,var(--accent),#6c8ef9)}
+    .sb-logo-icon.docs{background:linear-gradient(135deg,var(--docs-accent),var(--docs-accent2))}
+    .sb-logo-name{font-size:14px;font-weight:600;color:var(--text)}
+    .sb-logo-sub{font-size:10px;color:var(--muted)}
+    .sb-lbl{font-size:10px;color:var(--muted);padding:10px 6px 3px;
+        letter-spacing:.07em;text-transform:uppercase;font-weight:600}
+    .sb-item{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;
+        font-size:13px;color:var(--text2);cursor:pointer;transition:.15s;
+        text-decoration:none;line-height:1}
+    .sb-item:hover{background:var(--bg3);color:var(--text)}
+    .sb-item.active{background:var(--user-bg);color:var(--accent);font-weight:500}
+    .sb-item .ico{width:16px;text-align:center;flex-shrink:0;font-size:13px}
+    .sb-bottom{margin-top:auto;padding-top:10px;border-top:1px solid var(--border)}
+
+    /* ── MAIN ── */
+    .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+    .top{padding:12px 20px;border-bottom:1px solid var(--border);background:var(--bg2);
+        display:flex;align-items:center;gap:10px;flex-shrink:0;box-shadow:var(--shadow)}
+    .top-title{font-size:14px;font-weight:600}
+    .top-sub{font-size:11px;color:var(--muted)}
+    .top-btn{background:transparent;border:1px solid var(--border2);color:var(--text2);
+        font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;
+        font-family:var(--sans);transition:.15s}
+    .top-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--user-bg)}
+
+    /* ── CATEGORIES / CHIPS ── */
+    .cats{display:flex;gap:5px;padding:10px 20px 0;flex-shrink:0;overflow-x:auto;
+        scrollbar-width:none;background:var(--bg2)}
+    .cats::-webkit-scrollbar{display:none}
+    .cat{font-size:11.5px;padding:4px 12px;border-radius:16px;border:1px solid var(--border);
+        color:var(--muted);cursor:pointer;white-space:nowrap;font-family:var(--sans);transition:.15s;flex-shrink:0}
+    .cat.active,.cat:hover{border-color:var(--accent);color:var(--accent);background:var(--user-bg)}
+    .chips{display:flex;gap:5px;padding:8px 20px;flex-shrink:0;overflow-x:auto;
+        scrollbar-width:none;background:var(--bg2);border-bottom:1px solid var(--border)}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{font-size:11.5px;padding:4px 11px;border-radius:16px;background:var(--bg3);
+        border:1px solid var(--border);color:var(--text2);cursor:pointer;
+        white-space:nowrap;transition:.15s;flex-shrink:0;font-family:var(--sans)}
+    .chip:hover{border-color:var(--accent);color:var(--accent);background:var(--user-bg)}
+
+    /* ── MESSAGES ── */
+    .msgs{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px}
+    .msgs::-webkit-scrollbar{width:4px}
+    .msgs::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
+    .msg{display:flex;gap:9px;animation:fadeUp .22s ease}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    .msg.user{flex-direction:row-reverse}
+    .msg-av{width:28px;height:28px;border-radius:50%;flex-shrink:0;display:flex;
+        align-items:center;justify-content:center;font-size:12px;margin-top:2px;box-shadow:var(--shadow)}
+    .msg.ai .msg-av{background:linear-gradient(135deg,var(--accent),#6c8ef9);color:#fff}
+    .msg.ai.docs-mode .msg-av{background:linear-gradient(135deg,var(--docs-accent),var(--docs-accent2))}
+    .msg.user .msg-av{background:var(--user-bg);border:1.5px solid var(--user-border)}
+    .bub{max-width:100%;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.65;
+        box-shadow:var(--shadow);word-wrap:break-word;overflow-wrap:break-word}
+    .msg.user .bub{background:var(--user-bg);border:1px solid var(--user-border);border-radius:10px 3px 10px 10px}
+    .msg.ai .bub{background:var(--ai-bg);border:1px solid var(--border);border-radius:3px 10px 10px 10px}
+    .msg.ai.docs-mode .bub{border-color:var(--docs-border);background:#fdfbff}
+    .bub pre{background:var(--bg3);border:1px solid var(--border);border-radius:7px;
+        padding:10px 13px;margin-top:8px;font-family:var(--mono);font-size:11.5px;
+        color:#1e40af;white-space:pre-wrap;word-break:break-word;line-height:1.7}
+    .bub strong{font-weight:600;color:var(--accent)}
+    .msg.ai.docs-mode .bub strong{color:var(--docs-accent)}
+    .ts{font-size:10px;color:var(--muted);margin-top:3px;padding:0 3px}
+    .msg.user .ts{text-align:right}
+
+    /* ── TYPING ── */
+    .typing-dots{display:flex;align-items:center;gap:4px;padding:3px 0}
+    .typing-dots span{width:7px;height:7px;border-radius:50%;background:var(--border2);
+        animation:tdot 1.1s infinite}
+    .typing-dots span:nth-child(2){animation-delay:.2s}
+    .typing-dots span:nth-child(3){animation-delay:.4s}
+    @keyframes tdot{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px);background:var(--accent)}}
+
+    /* ── CHAT TABLES + METRICS (kept from original) ── */
+    .metrics-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(115px,1fr));
+        gap:7px;margin-top:9px}
+    .mc{background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+        padding:10px 12px;box-shadow:var(--shadow)}
+    .mc .mv{font-size:19px;font-weight:600;color:var(--accent);font-family:var(--mono)}
+    .mc .ml{font-size:10.5px;color:var(--muted);margin-top:2px}
+    .mc.ok .mv{color:var(--accent2)} .mc.warn .mv{color:var(--warn)} .mc.crit .mv{color:var(--red)}
+    .rcard{background:var(--bg2);border:1px solid var(--border);border-radius:9px;
+        margin-top:9px;overflow:hidden;box-shadow:var(--shadow2)}
+    .rcard-head{display:flex;align-items:center;justify-content:space-between;
+        padding:9px 14px;background:var(--bg3);border-bottom:1px solid var(--border)}
+    .rcard-title{font-size:12.5px;font-weight:600} .rcard-sub{font-size:10.5px;color:var(--muted);margin-top:1px}
+    .dl-btn{font-size:11px;padding:3px 10px;border-radius:6px;border:1px solid var(--accent);
+        color:var(--accent);background:transparent;cursor:pointer;text-decoration:none;
+        font-family:var(--sans);white-space:nowrap;transition:.15s}
+    .dl-btn:hover{background:var(--accent);color:#fff}
+    .rtw{overflow:auto;max-height:320px;width:100%}
+    table.rt{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px}
+    table.rt th{background:var(--bg3);color:var(--text2);padding:7px 10px;text-align:left;
+        border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;font-weight:600}
+    table.rt td{padding:6px 10px;border-bottom:1px solid var(--border);white-space:nowrap}
+    .bar-w{display:flex;align-items:center;gap:6px}
+    .bar-t{flex:1;height:5px;background:var(--bg3);border-radius:3px;overflow:hidden;
+        border:1px solid var(--border);min-width:40px}
+    .bar-f{height:100%;border-radius:3px}
+    .bar-f.ok{background:var(--accent2)} .bar-f.warn{background:var(--warn)} .bar-f.crit{background:var(--red)}
+    .tok{font-size:10.5px;min-width:36px;text-align:right;color:var(--text2)}
+    .ok-txt{color:var(--accent2);font-weight:500}
+    .warn-txt{color:var(--warn);font-weight:500}
+    .crit-txt{color:var(--red);font-weight:500}
+    .accent-txt{color:var(--accent);font-weight:500}
+
+    /* ── INPUT AREA ── */
+    .input-area{flex-shrink:0;border-top:1px solid var(--border);padding:11px 20px 13px;
+        background:var(--bg2);box-shadow:0 -2px 8px rgba(0,0,0,.04)}
+    .status-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:8px}
+    .model-pill{background:var(--user-bg);border:1px solid var(--user-border);color:var(--accent);
+        font-size:10.5px;padding:2px 8px;border-radius:5px;font-family:var(--mono);font-weight:500}
+    .model-pill.docs{background:var(--docs-bg);border-color:var(--docs-border);color:var(--docs-accent)}
+    .input-row{display:flex;gap:8px;align-items:flex-end}
+    .input-wrap{flex:1;background:var(--bg);border:1.5px solid var(--border2);border-radius:10px;
+        display:flex;align-items:flex-end;padding:0 12px;transition:border-color .2s;box-shadow:var(--shadow)}
+    .input-wrap:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,110,248,.1)}
+    .input-wrap.docs-focus:focus-within{border-color:var(--docs-accent);
+        box-shadow:0 0 0 3px rgba(124,58,237,.1)}
+    textarea.q{flex:1;background:transparent;border:none;outline:none;color:var(--text);
+        font-family:var(--sans);font-size:13px;padding:11px 0;resize:none;
+        min-height:42px;max-height:140px;overflow-y:auto;line-height:1.5}
+    textarea.q::placeholder{color:var(--muted)}
+    .send-btn{background:var(--accent);border:none;border-radius:10px;color:#fff;padding:11px 18px;
+        cursor:pointer;font-size:13px;font-weight:600;height:42px;display:flex;align-items:center;
+        gap:6px;font-family:var(--sans);transition:.15s;flex-shrink:0;box-shadow:0 2px 8px rgba(59,110,248,.3)}
+    .send-btn:hover{background:#2558e8;transform:translateY(-1px)}
+    .send-btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+    .send-btn.docs{background:var(--docs-accent);box-shadow:0 2px 8px rgba(124,58,237,.3)}
+    .send-btn.docs:hover{background:#6d28d9}
+    .hint{font-size:10.5px;color:var(--muted);margin-top:6px;padding-left:2px}
+
+    /* ── EMPTY ── */
+    .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+        gap:12px;text-align:center;padding:40px 20px}
+    .empty-icon{width:64px;height:64px;border-radius:50%;display:flex;align-items:center;
+        justify-content:center;font-size:28px;border:1px solid var(--user-border);background:var(--user-bg)}
+    .empty-icon.docs{background:var(--docs-bg);border-color:var(--docs-border)}
+    .empty h3{font-size:15px;font-weight:600}
+    .empty p{font-size:12.5px;color:var(--muted);max-width:420px;line-height:1.6}
+
+    /* ── DOCUMENT LIST ── */
+    .doc-list{flex:1;overflow-y:auto;padding:0 4px}
+    .doc-item{padding:8px 10px;border-radius:8px;margin-bottom:4px;cursor:pointer;
+        background:var(--bg3);border:1px solid transparent;transition:.15s;display:flex;
+        align-items:flex-start;gap:8px;font-size:12px;line-height:1.4}
+    .doc-item:hover{border-color:var(--docs-border)}
+    .doc-item.sel{border-color:var(--docs-accent);background:var(--docs-bg)}
+    .doc-item input[type=checkbox]{margin-top:2px;accent-color:var(--docs-accent)}
+    .doc-item .meta{font-size:10px;color:var(--muted);margin-top:2px}
+    .doc-item .fn{word-break:break-all;font-weight:500}
+    .doc-item .x{margin-left:auto;color:var(--muted);padding:2px;border-radius:4px}
+    .doc-item .x:hover{color:var(--red);background:#fee2e2}
+
+    .dropzone{border:2px dashed var(--docs-border);border-radius:10px;padding:14px 12px;
+        text-align:center;color:var(--muted);font-size:12px;cursor:pointer;transition:.15s;
+        background:var(--docs-bg);margin-bottom:10px}
+    .dropzone:hover,.dropzone.drag{border-color:var(--docs-accent);background:#f5ecff;color:var(--docs-accent)}
+    .dropzone .big{font-size:22px;display:block;margin-bottom:4px}
+
+    /* ── REPORT CARD (in chat) ── */
+    .report-card{background:#fff;border:1px solid var(--docs-border);border-radius:10px;
+        overflow:hidden;margin-top:9px}
+    .report-card .hd{background:linear-gradient(135deg,var(--docs-bg),#f0e8ff);
+        border-bottom:1px solid var(--docs-border);padding:10px 14px;display:flex;
+        align-items:center;justify-content:space-between;gap:10px}
+    .report-card .hd h4{font-size:13px;font-weight:600;color:var(--docs-accent)}
+    .report-card .hd small{color:var(--muted);display:block;margin-top:2px}
+    .report-card .bd{padding:14px;font-size:12.5px;line-height:1.7}
+    .report-card .bd h1,.report-card .bd h2,.report-card .bd h3{margin:12px 0 6px;color:#111}
+    .report-card .bd h1{font-size:16px;border-bottom:1px solid var(--border);padding-bottom:6px}
+    .report-card .bd h2{font-size:14px} .report-card .bd h3{font-size:13px}
+    .report-card .bd ul,.report-card .bd ol{margin-left:20px;margin-top:4px}
+    .report-card .bd code{background:var(--bg3);border-radius:3px;padding:1px 5px;
+        font-family:var(--mono);font-size:11.5px}
+    .report-card .bd pre{background:var(--bg3);padding:10px;border-radius:6px;overflow:auto;
+        font-family:var(--mono);font-size:11.5px;margin-top:6px}
+
+    .docs-toolbar{display:flex;gap:6px;margin-top:8px}
+    .docs-toolbar button{flex:1;font-size:11.5px;padding:6px 8px;border-radius:7px;
+        border:1px solid var(--docs-border);background:#fff;color:var(--docs-accent);
+        cursor:pointer;font-family:var(--sans);font-weight:600;transition:.15s}
+    .docs-toolbar button:hover{background:var(--docs-bg)}
+    .docs-toolbar button.primary{background:var(--docs-accent);color:#fff;border-color:var(--docs-accent)}
+    .docs-toolbar button.primary:hover{background:#6d28d9}
+    .docs-toolbar button:disabled{opacity:.5;cursor:not-allowed}
+
+    /* responsive */
+    @media(max-width:768px){
+        .sb{width:60px;padding:8px}
+        .sb .sb-logo-name,.sb .sb-logo-sub,.sb .sb-lbl,.sb .sb-item span:not(.ico){display:none}
+        .sb .sb-item{justify-content:center;padding:8px 4px}
+    }
+    @media(max-width:480px){ .sb{display:none} }
+</style>
+</head>
+<body>
+
+<!-- MODE SWITCHER -->
+<div class="mode-bar">
+    <button class="mode-btn active" id="modeBtnInfra" onclick="setMode('infra')">
+        💬 Infra Chat
+    </button>
+    <button class="mode-btn" id="modeBtnDocs" onclick="setMode('docs')">
+        📄 Document Analyst
+    </button>
+    <div style="margin-left:auto;font-size:11px;color:var(--muted)">
+        <span id="modeHint">Querying vcenter_inventory_v3 · phi3-local</span>
+    </div>
+</div>
+
+<!-- ══════════════════ INFRA MODE ══════════════════ -->
+<div class="shell" id="shellInfra">
+    <div class="sb">
+        <div class="sb-logo">
+            <div class="sb-logo-icon infra">🤖</div>
+            <div>
+                <div class="sb-logo-name">Infra Assistant</div>
+                <div class="sb-logo-sub">VMware &amp; Hyper-V AI</div>
+            </div>
+        </div>
+        <a href="/ai_chat" class="sb-item active"><span class="ico">💬</span>AI Chat</a>
+        <a href="/" class="sb-item"><span class="ico">🏠</span>Dashboard</a>
+        <a href="/clusters" class="sb-item"><span class="ico">🖥</span>Clusters</a>
+        <a href="/vms" class="sb-item"><span class="ico">⚙</span>VMs</a>
+        <a href="/hosts" class="sb-item"><span class="ico">🖧</span>Hosts</a>
+        <a href="/datastores" class="sb-item"><span class="ico">💾</span>Datastores</a>
+        <a href="/vcenters" class="sb-item"><span class="ico">🔗</span>vCenters</a>
+
+        <div class="sb-lbl">Quick Reports</div>
+        <div class="sb-item" onclick="sendQ('Generate full infrastructure report')"><span class="ico">📊</span>Full Report</div>
+        <div class="sb-item" onclick="sendQ('Generate cluster CPU report')"><span class="ico">⚡</span>CPU Report</div>
+        <div class="sb-item" onclick="sendQ('Generate cluster memory report')"><span class="ico">🧠</span>Memory Report</div>
+        <div class="sb-item" onclick="sendQ('Generate datastore report')"><span class="ico">💾</span>Datastore Report</div>
+        <div class="sb-item" onclick="sendQ('Generate hosts report')"><span class="ico">🖧</span>Hosts Report</div>
+
+        <div class="sb-lbl">VM Placement</div>
+        <div class="sb-item" onclick="sendQ('Where should I place a 4 vCPU 16GB 100GB VM?')"><span class="ico">🎯</span>Suggest Placement</div>
+
+        <div class="sb-bottom">
+            <div class="sb-item" onclick="clearInfraChat()"><span class="ico">🗑</span>Clear Chat</div>
+            {% if session.get('role') == 'superadmin' %}
+            <div class="sb-item" onclick="trainModels()"><span class="ico">⚙</span>Train ML Models</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="top">
+            <div class="ai-online" style="width:8px;height:8px;border-radius:50%;background:var(--accent2);box-shadow:0 0 6px rgba(34,197,94,.5)"></div>
+            <div>
+                <div class="top-title">Infra Assistant</div>
+                <div class="top-sub">VMware &amp; Hyper-V · Direct DB engine · Phi-3 fallback · Cluster comparison</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:6px">
+                <button class="top-btn" onclick="clearInfraChat()">🗑 Clear</button>
+            </div>
+        </div>
+
+        <div class="cats" id="infraCatTabs">
+            <div class="cat active" onclick="setInfraCat(this,'all')">All</div>
+            <div class="cat" onclick="setInfraCat(this,'capacity')">⚡ Capacity</div>
+            <div class="cat" onclick="setInfraCat(this,'vms')">🖥 VMs</div>
+            <div class="cat" onclick="setInfraCat(this,'health')">🧠 Health</div>
+            <div class="cat" onclick="setInfraCat(this,'datastores')">💾 Datastores</div>
+            <div class="cat" onclick="setInfraCat(this,'platform')">🔄 Platforms</div>
+            <div class="cat" onclick="setInfraCat(this,'forecast')">📈 Forecast</div>
+            <div class="cat" onclick="setInfraCat(this,'reports')">📊 Reports</div>
+            <div class="cat" onclick="setInfraCat(this,'placement')">🎯 Placement</div>
+        </div>
+        <div class="chips" id="infraSuggestions"></div>
+
+        <div class="msgs" id="infraMsgs">
+            <div class="empty" id="infraEmpty">
+                <div class="empty-icon">🤖</div>
+                <h3>Hello, I'm Infra Assistant</h3>
+                <p>Ask me anything about your VMware and Hyper-V infrastructure — clusters, VMs, hosts, datastores, or let me suggest the best placement for a new VM.</p>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="status-row">
+                <span class="model-pill">phi3-local</span>
+                <span>Direct DB engine · ML predictions optional</span>
+            </div>
+            <div class="input-row">
+                <div class="input-wrap">
+                    <textarea id="infraQ" rows="1" class="q"
+                        placeholder="Ask anything · e.g. Tell me about VM-prod-01 · Where to place a 4vCPU 16GB VM? · Generate full report"></textarea>
+                </div>
+                <button class="send-btn" id="infraSend" onclick="infraAsk()">↗ Ask</button>
+            </div>
+            <div class="hint">Enter ↵ to send · Shift+Enter for new line</div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════ DOCUMENT MODE ══════════════════ -->
+<div class="shell" id="shellDocs" style="display:none;">
+    <div class="sb">
+        <div class="sb-logo">
+            <div class="sb-logo-icon docs">📄</div>
+            <div>
+                <div class="sb-logo-name">Document Analyst</div>
+                <div class="sb-logo-sub">qwen3-14b · Q&amp;A + reports</div>
+            </div>
+        </div>
+
+        <div class="sb-lbl">Upload</div>
+        <div class="dropzone" id="docDrop" onclick="document.getElementById('docInput').click()">
+            <span class="big">⬆</span>
+            Click or drop files here<br>
+            <small>PDF · DOCX · XLSX · TXT · MD · CSV · JSON</small>
+        </div>
+        <input type="file" id="docInput" multiple style="display:none"
+               onchange="uploadDocs(this.files)">
+
+        <div class="sb-lbl" style="margin-top:10px">
+            Documents <span id="docCount" style="font-weight:400;color:var(--muted)">(0)</span>
+        </div>
+        <div class="doc-list" id="docList">
+            <div class="text-center" style="padding:20px 8px;color:var(--muted);font-size:11px">
+                No documents yet
+            </div>
+        </div>
+
+        <div class="sb-lbl" style="margin-top:10px">Reports</div>
+        <div class="doc-list" id="reportList" style="max-height:160px">
+            <div class="text-center" style="padding:14px 8px;color:var(--muted);font-size:11px">
+                No reports yet
+            </div>
+        </div>
+
+        <div class="sb-bottom">
+            <div class="sb-item" onclick="clearDocsChat()"><span class="ico">🗑</span>Clear Chat</div>
+            <div class="sb-item" onclick="selectAllDocs()"><span class="ico">☑</span>Select All</div>
+            <div class="sb-item" onclick="deselectAllDocs()"><span class="ico">☐</span>Deselect All</div>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="top">
+            <div style="width:8px;height:8px;border-radius:50%;background:var(--docs-accent2);box-shadow:0 0 6px rgba(168,85,247,.5)"></div>
+            <div>
+                <div class="top-title">Document Analyst</div>
+                <div class="top-sub">Q&amp;A + report generation · qwen3-14b-local · sources: your uploaded files</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:6px">
+                <button class="top-btn" onclick="clearDocsChat()">🗑 Clear</button>
+                <button class="top-btn" onclick="openReportModal()" id="genReportBtn" style="border-color:var(--docs-accent);color:var(--docs-accent)">📝 Generate Report</button>
+            </div>
+        </div>
+
+        <div class="cats" id="docsCatTabs">
+            <div class="cat active" onclick="setDocsCat(this,'qa')">💬 Ask</div>
+            <div class="cat" onclick="setDocsCat(this,'summarize')">📋 Summarize</div>
+            <div class="cat" onclick="setDocsCat(this,'extract')">🔍 Extract</div>
+            <div class="cat" onclick="setDocsCat(this,'compare')">⚖️ Compare</div>
+            <div class="cat" onclick="setDocsCat(this,'report')">📝 Report</div>
+        </div>
+        <div class="chips" id="docsSuggestions"></div>
+
+        <div class="msgs" id="docsMsgs">
+            <div class="empty" id="docsEmpty">
+                <div class="empty-icon docs">📄</div>
+                <h3>Upload documents to begin</h3>
+                <p>Use the panel on the left to add files. Then ask questions, extract information, compare documents, or generate a full report.<br><br>
+                   <strong>Model:</strong> qwen3-14b-local (deep reasoning)<br>
+                   <strong>Supported:</strong> PDF, DOCX, XLSX, TXT, MD, CSV, JSON, XML, HTML, YAML</p>
+            </div>
+        </div>
+
+        <div class="input-area">
+            <div class="status-row">
+                <span class="model-pill docs">qwen3-14b-local</span>
+                <span id="docsSelInfo">No documents selected — will use all</span>
+            </div>
+            <div class="input-row">
+                <div class="input-wrap docs-focus">
+                    <textarea id="docsQ" rows="1" class="q"
+                        placeholder="Ask about your documents · e.g. Summarize the key risks · What is the payment schedule?"></textarea>
+                </div>
+                <button class="send-btn docs" id="docsSend" onclick="docsAsk()">↗ Ask</button>
+            </div>
+            <div class="hint">Enter ↵ to send · Shift+Enter for new line · use "Generate Report" for a downloadable document</div>
+        </div>
+    </div>
+</div>
+
+<!-- REPORT MODAL -->
+<div class="modal fade" id="reportModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header" style="background:linear-gradient(135deg,var(--docs-accent),var(--docs-accent2));color:#fff">
+        <h6 class="modal-title">📝 Generate Report</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted)">Report Title</label>
+        <input id="repTitle" type="text" class="form-control form-control-sm mb-3"
+               placeholder="e.g. Q4 Contract Review">
+        <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted)">Instruction (what should the report contain?)</label>
+        <textarea id="repInstruction" class="form-control form-control-sm" rows="4"
+            placeholder="e.g. Summarize each contract, list payment terms, highlight risks and deadlines. Include a comparison table at the end."></textarea>
+        <div class="row g-2 mt-3">
+          <div class="col-md-6">
+            <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted)">Format</label>
+            <select id="repFormat" class="form-select form-select-sm">
+              <option value="md" selected>Markdown (.md)</option>
+              <option value="html">HTML (.html)</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label style="font-size:11px;font-weight:600;text-transform:uppercase;color:var(--muted)">Sources</label>
+            <div style="font-size:12px;padding-top:6px" id="repSourcesInfo">—</div>
+          </div>
+        </div>
+        <div id="repAlert" class="mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm" id="repGoBtn" onclick="generateReport()"
+                style="background:var(--docs-accent);color:#fff;border:none">
+          <i class="bi bi-magic me-1"></i>Generate
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script>
+/* ════════════════════════════════════════════════════════════
+   MODE SWITCHING
+════════════════════════════════════════════════════════════ */
+let currentMode = 'infra';
+function setMode(mode){
+    currentMode = mode;
+    document.getElementById('shellInfra').style.display = mode === 'infra' ? 'flex' : 'none';
+    document.getElementById('shellDocs').style.display  = mode === 'docs'  ? 'flex' : 'none';
+    document.getElementById('modeBtnInfra').classList.toggle('active', mode === 'infra');
+    document.getElementById('modeBtnDocs').classList.toggle('active', mode === 'docs');
+    document.getElementById('modeBtnDocs').classList.toggle('docs', mode === 'docs');
+    document.getElementById('modeHint').textContent = mode === 'infra'
+        ? 'Querying vcenter_inventory_v3 · phi3-local'
+        : 'Document Q&A + report generation · qwen3-14b-local';
+    if (mode === 'docs') {
+        loadDocs(); loadReports();
+    }
+}
+
+/* ════════════════════════════════════════════════════════════
+   SHARED UTILITIES
+════════════════════════════════════════════════════════════ */
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function nowStr(){return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});}
+function csrf(){return document.querySelector('meta[name="csrf-token"]')?.content;}
+
+function addMsg(containerId, role, html, isErr, docsMode){
+    const wrap = document.getElementById(containerId);
+    const empty = wrap.querySelector('.empty');
+    if (empty) empty.remove();
+    const d = document.createElement('div');
+    d.className = 'msg ' + (isErr ? 'err' : role) + (docsMode ? ' docs-mode' : '');
+    d.innerHTML = `<div class="msg-av">${role==='user'?'👤':(docsMode?'📄':'🤖')}</div>
+                   <div><div class="bub">${html}</div><div class="ts">${nowStr()}</div></div>`;
+    wrap.appendChild(d);
+    wrap.scrollTop = wrap.scrollHeight;
+}
+function showTyping(containerId, docsMode){
+    const wrap = document.getElementById(containerId);
+    const empty = wrap.querySelector('.empty');
+    if (empty) empty.remove();
+    const d = document.createElement('div');
+    d.id = containerId + '_typing';
+    d.className = 'msg ai' + (docsMode ? ' docs-mode' : '');
+    d.innerHTML = `<div class="msg-av">${docsMode?'📄':'🤖'}</div>
+        <div><div class="bub"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+    wrap.appendChild(d);
+    wrap.scrollTop = wrap.scrollHeight;
+}
+function removeTyping(containerId){
+    const t = document.getElementById(containerId + '_typing');
+    if (t) t.remove();
+}
+function autoGrow(ta){
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 140) + 'px';
+}
+function bindTextarea(id, sendFn){
+    const ta = document.getElementById(id);
+    ta.addEventListener('input', () => autoGrow(ta));
+    ta.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendFn(); }
+    });
+}
+
+/* ════════════════════════════════════════════════════════════
+   INFRA CHAT (unchanged behaviour, kept intact)
+════════════════════════════════════════════════════════════ */
+const SUGG = {
+    all:['Hello, what can you do?','Give me an infrastructure overview','How many of all VMs?',
+         'Which cluster has most free CPU?','Generate full report','Where to place a 4vCPU 16GB VM?'],
+    capacity:['Which cluster has the most free CPU?','Which cluster has the most free memory?',
+              'Clusters with CPU above 80%','Average CPU usage VMware clusters','Which cluster is idle?'],
+    vms:['How many VMs total?','How many VMware VMs?','How many Hyper-V VMs?',
+         'Which cluster has the most VMs?','VMs per vCenter'],
+    health:['Infrastructure health summary','Clusters high on both CPU and memory',
+            'Which cluster is healthiest?','Which clusters are underutilised?'],
+    datastores:['Which datastore has the most free space?','Datastores less than 10% free',
+                'How many datastores total?','Total datastore capacity'],
+    platform:['VMware vs Hyper-V comparison','Total CPU capacity VMware vs Hyper-V',
+              'Compare VM count between platforms'],
+    forecast:['Predict CPU for all clusters','Which cluster will hit CPU limit soonest?'],
+    reports:['Generate full infrastructure report','Generate cluster CPU report',
+             'Generate cluster memory report','Generate datastore report','Generate hosts report'],
+    placement:['Where to place a 4vCPU 16GB 100GB VM?','Best cluster for a database VM (8vCPU 32GB)?'],
+};
+let infraCat = 'all';
+function setInfraCat(el, c){
+    infraCat = c;
+    document.querySelectorAll('#infraCatTabs .cat').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    renderInfraChips();
+}
+function renderInfraChips(){
+    const bar = document.getElementById('infraSuggestions');
+    bar.innerHTML = '';
+    (SUGG[infraCat] || SUGG.all).forEach(s => {
+        const c = document.createElement('div');
+        c.className = 'chip';
+        c.textContent = s;
+        c.onclick = () => { document.getElementById('infraQ').value = s; infraAsk(); };
+        bar.appendChild(c);
+    });
+}
+renderInfraChips();
+bindTextarea('infraQ', () => infraAsk());
+
+function clearInfraChat(){
+    document.getElementById('infraMsgs').innerHTML =
+        `<div class="empty" id="infraEmpty"><div class="empty-icon">🤖</div>
+         <h3>Hello, I'm Infra Assistant</h3>
+         <p>Ask me anything about your VMware and Hyper-V infrastructure.</p></div>`;
+}
+function sendQ(q){ document.getElementById('infraQ').value = q; infraAsk(); }
+
+function fmt(raw){
+    if (typeof raw === 'object' && raw !== null) return renderReport(raw);
+    if (typeof raw === 'string'){
+        if (raw.trim().startsWith('{')){ try{ return renderReport(JSON.parse(raw)); }catch(e){} }
+        const e = esc(raw);
+        if (raw.includes('\n')) return `<pre>${e}</pre>`;
+        return e.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
+    }
+    return esc(String(raw));
+}
+function renderReport(d){
+    if (d.type === 'metrics') return renderMetrics(d);
+    if (d.type === 'table')   return renderTable(d);
+    if (d.type === 'full')    return renderFull(d);
+    if (d.type === 'placement') return renderPlacement(d);
+    return `<pre>${esc(JSON.stringify(d,null,2))}</pre>`;
+}
+function renderMetrics(d){
+    const title = d.title ? `<div style="font-size:12.5px;font-weight:600;margin-bottom:8px">${esc(d.title)}</div>` : '';
+    const cards = (d.metrics || []).map(m => {
+        const cls = m.status === 'crit' ? 'crit' : m.status === 'warn' ? 'warn' : 'ok';
+        return `<div class="mc ${cls}"><div class="mv">${esc(String(m.value))}</div><div class="ml">${esc(m.label)}</div></div>`;
+    }).join('');
+    const note = d.note ? `<div style="font-size:11px;color:var(--muted);margin-top:7px">${esc(d.note)}</div>` : '';
+    return `${title}<div class="metrics-grid">${cards}</div>${note}`;
+}
+function pctCls(p){ return p >= 85 ? 'crit' : p >= 70 ? 'warn' : 'ok'; }
+function renderTable(d){
+    const cols = d.columns || [], rows = d.rows || [], title = d.title || 'Report';
+    const thead = cols.map(c => `<th>${esc(c.label||c.key)}</th>`).join('');
+    const tbody = rows.map(r => `<tr>${cols.map(c => {
+        const v = r[c.key];
+        if (c.type === 'bar'){
+            const p = parseFloat(v)||0;
+            return `<td><div class="bar-w"><div class="bar-t"><div class="bar-f ${pctCls(p)}" style="width:${Math.min(p,100)}%"></div></div><span class="tok">${p.toFixed(1)}%</span></div></td>`;
+        }
+        return `<td>${v!=null?esc(String(v)):'–'}</td>`;
+    }).join('')}</tr>`).join('');
+    const csvHeaders = cols.map(c => c.label || c.key).join(',');
+    const csvRows = rows.map(r => cols.map(c => {
+        const v = r[c.key];
+        if (v == null) return '';
+        const s = String(v);
+        return s.includes(',') || s.includes('"') ? `"${s.replace(/"/g,'""')}"` : s;
+    }).join(',')).join('\n');
+    const url = 'data:text/csv;charset=utf-8,\uFEFF' + encodeURIComponent(csvHeaders + '\n' + csvRows);
+    return `<div class="rcard">
+        <div class="rcard-head">
+            <div><div class="rcard-title">${esc(title)}</div><div class="rcard-sub">${rows.length} rows</div></div>
+            <a class="dl-btn" href="${url}" download="${esc(title.replace(/\s+/g,'_'))}.csv">⬇ CSV</a>
+        </div>
+        <div class="rtw"><table class="rt"><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table></div>
+    </div>`;
+}
+function renderFull(d){
+    let h = '';
+    if (d.title) h += `<div style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:8px">📊 ${esc(d.title)}</div>`;
+    if (d.summary) h += renderMetrics({metrics: d.summary});
+    if (d.note) h += `<div style="font-size:11px;color:var(--muted);margin-top:6px">${esc(d.note)}</div>`;
+    (d.sections || []).forEach(sec => {
+        h += `<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;margin-top:13px;margin-bottom:4px">${esc(sec.title||'')}</div>`;
+        h += renderTable(sec);
+    });
+    return h;
+}
+function renderPlacement(d){
+    const reqs = d.requirements || {};
+    const items = (d.suggestions || []).slice(0,5).map((s,i) => {
+        const ranks = ['r1','r2','r3','r3','r3'], medals = ['🥇','🥈','🥉','4','5'];
+        const cpu = s.available_resources?.current_cpu_usage || 0;
+        const mem = s.available_resources?.current_memory_usage || 0;
+        return `<div style="padding:9px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+            <div style="width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+                background:#fef3c7;color:#92400e;font-size:11px;font-weight:700">${medals[i]}</div>
+            <div style="flex:1">
+                <div style="font-size:12.5px;font-weight:500">${esc(s.cluster_name)}</div>
+                <div style="font-size:11px;color:var(--muted)">${esc(s.platform)} · ${esc(s.vcenter_name||'')} · ${s.num_vms} VMs</div>
+            </div>
+            <div style="font-size:12px;font-weight:600;color:var(--accent)">${s.total_score?.toFixed(1)||'–'}</div>
+        </div>`;
+    }).join('');
+    return `<div class="rcard">
+        <div class="rcard-head">
+            <div><div class="rcard-title">🎯 VM Placement Suggestions</div>
+                 <div class="rcard-sub">${reqs.cpu_cores||'?'} vCPU · ${reqs.ram_gb||'?'} GB RAM · ${reqs.storage_gb||'?'} GB disk</div></div>
+        </div>
+        ${items||'<div style="padding:14px;color:var(--muted)">No suitable clusters.</div>'}
+    </div>`;
+}
+
+async function infraAsk(){
+    const input = document.getElementById('infraQ');
+    const q = (input.value || '').trim();
+    if (!q || input.disabled) return;
+    input.disabled = true;
+    document.getElementById('infraSend').disabled = true;
+    input.value = ''; input.style.height = 'auto';
+    addMsg('infraMsgs', 'user', esc(q));
+    showTyping('infraMsgs', false);
+    try {
+        const r = await fetch('/api/ai/ask', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json','X-CSRFToken': csrf()},
+            body: JSON.stringify({question: q})
+        });
+        const j = await r.json();
+        removeTyping('infraMsgs');
+        if (j.error) addMsg('infraMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(j.error)}</span>`, true);
+        else {
+            const parts = [];
+            if (j.answer) parts.push(fmt(j.answer));
+            if (j.report) parts.push(fmt(j.report));
+            addMsg('infraMsgs', 'ai', parts.join(''));
+        }
+    } catch (e) {
+        removeTyping('infraMsgs');
+        addMsg('infraMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(e.message)}</span>`, true);
+    } finally {
+        input.disabled = false;
+        document.getElementById('infraSend').disabled = false;
+        input.focus();
+    }
+}
+
+async function trainModels(){
+    if (!confirm('Train ML models for all clusters?')) return;
+    addMsg('infraMsgs', 'ai', 'Training ML models…');
+    const r = await fetch('/api/ai/train_models', {method:'POST', headers:{'X-CSRFToken':csrf()}});
+    const d = await r.json();
+    const summary = (d.results || []).map(x => `${x.entity}: ${x.status}`).join('\n');
+    addMsg('infraMsgs', 'ai', `<pre>${esc(summary)}</pre>`);
+}
+
+/* ════════════════════════════════════════════════════════════
+   DOCUMENT MODE
+════════════════════════════════════════════════════════════ */
+let docs = [];
+let reports = [];
+let selectedDocIds = new Set();
+let docsCat = 'qa';
+
+const DOC_SUGG = {
+    qa:        ['What is this document about?', 'List the key parties mentioned.',
+                'What are the important dates?', 'What actions are required?'],
+    summarize: ['Summarize this document in 5 bullet points.',
+                'Give me a one-paragraph executive summary.',
+                'Summarize each section separately.'],
+    extract:   ['Extract all names, emails and phone numbers.',
+                'List every monetary amount mentioned.',
+                'Extract all dates and deadlines into a table.'],
+    compare:   ['Compare the documents side by side.',
+                'What changed between these documents?',
+                'Which document has the stricter terms?'],
+    report:    ['Generate a full report with sections, findings, and recommendations.'],
+};
+function setDocsCat(el, c){
+    docsCat = c;
+    document.querySelectorAll('#docsCatTabs .cat').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    renderDocsChips();
+}
+function renderDocsChips(){
+    const bar = document.getElementById('docsSuggestions');
+    bar.innerHTML = '';
+    (DOC_SUGG[docsCat] || DOC_SUGG.qa).forEach(s => {
+        const c = document.createElement('div');
+        c.className = 'chip';
+        c.textContent = s;
+        c.onclick = () => {
+            if (docsCat === 'report') { openReportModal(); return; }
+            document.getElementById('docsQ').value = s;
+            docsAsk();
+        };
+        bar.appendChild(c);
+    });
+}
+renderDocsChips();
+bindTextarea('docsQ', () => docsAsk());
+
+// drag & drop
+const dz = document.getElementById('docDrop');
+['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.add('drag');
+}));
+['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+    e.preventDefault(); dz.classList.remove('drag');
+}));
+dz.addEventListener('drop', e => {
+    if (e.dataTransfer?.files?.length) uploadDocs(e.dataTransfer.files);
+});
+
+async function uploadDocs(files){
+    if (!files || !files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f);
+    addMsg('docsMsgs', 'user', `📎 Uploading ${files.length} file(s)…`);
+    showTyping('docsMsgs', true);
+    try {
+        const r = await fetch('/api/docs/upload', {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrf()},
+            body: fd,
+        });
+        const j = await r.json();
+        removeTyping('docsMsgs');
+        if (j.error) {
+            addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(j.error)}</span>`, true, true);
+        } else {
+            let msg = `✅ Uploaded ${j.saved.length} file(s):`;
+            for (const s of j.saved) {
+                msg += `<br>• <strong>${esc(s.filename)}</strong> — ${(s.size_bytes/1024).toFixed(1)} KB, ${s.text_length.toLocaleString()} chars extracted`;
+            }
+            if (j.errors?.length) {
+                msg += `<br><br>⚠ Some files failed:<br>` + j.errors.map(x=>esc(x)).join('<br>');
+            }
+            addMsg('docsMsgs', 'ai', msg, false, true);
+            loadDocs();
+        }
+    } catch (e) {
+        removeTyping('docsMsgs');
+        addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(e.message)}</span>`, true, true);
+    }
+}
+
+async function loadDocs(){
+    try {
+        const r = await fetch('/api/docs/list');
+        docs = await r.json();
+        renderDocsList();
+    } catch (e) {
+        console.error('loadDocs failed', e);
+    }
+}
+
+function renderDocsList(){
+    document.getElementById('docCount').textContent = `(${docs.length})`;
+    const el = document.getElementById('docList');
+    if (!docs.length){
+        el.innerHTML = '<div class="text-center" style="padding:20px 8px;color:var(--muted);font-size:11px">No documents yet</div>';
+        return;
+    }
+    el.innerHTML = docs.map(d => `
+        <div class="doc-item ${selectedDocIds.has(d.id)?'sel':''}" onclick="toggleDoc(${d.id},event)">
+            <input type="checkbox" ${selectedDocIds.has(d.id)?'checked':''}
+                   onclick="event.stopPropagation();toggleDoc(${d.id},event)">
+            <div style="flex:1;min-width:0">
+                <div class="fn" title="${esc(d.filename)}">${esc(d.filename)}</div>
+                <div class="meta">${(d.size_bytes/1024).toFixed(0)} KB · ${(d.text_length||0).toLocaleString()} chars</div>
+            </div>
+            <a class="x" href="/api/docs/download/${d.id}" title="Download"
+               onclick="event.stopPropagation()">⬇</a>
+            {% if session.get('role') == 'superadmin' %}
+            <span class="x" title="Delete" onclick="event.stopPropagation();deleteDoc(${d.id})">✕</span>
+            {% endif %}
+        </div>
+    `).join('');
+    updateDocsSelInfo();
+}
+
+function toggleDoc(id, ev){
+    if (selectedDocIds.has(id)) selectedDocIds.delete(id);
+    else selectedDocIds.add(id);
+    renderDocsList();
+}
+function selectAllDocs(){
+    docs.forEach(d => selectedDocIds.add(d.id));
+    renderDocsList();
+}
+function deselectAllDocs(){
+    selectedDocIds.clear();
+    renderDocsList();
+}
+async function deleteDoc(id){
+    if (!confirm('Delete this document permanently?')) return;
+    const r = await fetch(`/api/docs/${id}`, {method: 'DELETE', headers: {'X-CSRFToken': csrf()}});
+    if (r.ok) {
+        selectedDocIds.delete(id);
+        loadDocs();
+    }
+}
+function updateDocsSelInfo(){
+    const el = document.getElementById('docsSelInfo');
+    if (selectedDocIds.size === 0) el.textContent = 'No documents selected — will use all';
+    else el.textContent = `${selectedDocIds.size} document(s) selected`;
+}
+
+async function docsAsk(){
+    const input = document.getElementById('docsQ');
+    const q = (input.value || '').trim();
+    if (!q || input.disabled) return;
+    if (!docs.length){
+        addMsg('docsMsgs', 'ai', '⚠ Upload at least one document first.', true, true);
+        return;
+    }
+    input.disabled = true;
+    document.getElementById('docsSend').disabled = true;
+    input.value = ''; input.style.height = 'auto';
+    addMsg('docsMsgs', 'user', esc(q), false, true);
+    showTyping('docsMsgs', true);
+    try {
+        const r = await fetch('/api/docs/ask', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json','X-CSRFToken': csrf()},
+            body: JSON.stringify({
+                question: q,
+                doc_ids: Array.from(selectedDocIds),
+            })
+        });
+        const j = await r.json();
+        removeTyping('docsMsgs');
+        if (j.error) {
+            addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(j.error)}</span>`, true, true);
+        } else {
+            const html = mdToHtml(j.answer || '');
+            addMsg('docsMsgs', 'ai', html, false, true);
+        }
+    } catch (e) {
+        removeTyping('docsMsgs');
+        addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(e.message)}</span>`, true, true);
+    } finally {
+        input.disabled = false;
+        document.getElementById('docsSend').disabled = false;
+        input.focus();
+    }
+}
+
+function clearDocsChat(){
+    document.getElementById('docsMsgs').innerHTML =
+        `<div class="empty" id="docsEmpty"><div class="empty-icon docs">📄</div>
+         <h3>Upload documents to begin</h3>
+         <p>Use the panel on the left to add files. Then ask questions, extract information, compare documents, or generate a full report.</p></div>`;
+}
+
+/* ── Report generation ── */
+function openReportModal(){
+    if (!docs.length){
+        addMsg('docsMsgs', 'ai', '⚠ Upload at least one document first.', true, true);
+        return;
+    }
+    document.getElementById('repTitle').value = '';
+    document.getElementById('repInstruction').value = '';
+    document.getElementById('repAlert').style.display = 'none';
+    document.getElementById('repSourcesInfo').textContent =
+        selectedDocIds.size ? `${selectedDocIds.size} document(s) selected`
+                            : `All ${docs.length} document(s)`;
+    new bootstrap.Modal(document.getElementById('reportModal')).show();
+}
+
+async function generateReport(){
+    const title = document.getElementById('repTitle').value.trim();
+    const instruction = document.getElementById('repInstruction').value.trim();
+    const fmt = document.getElementById('repFormat').value;
+    const btn = document.getElementById('repGoBtn');
+    const alertEl = document.getElementById('repAlert');
+
+    if (!instruction){
+        alertEl.style.display = 'block';
+        alertEl.className = 'alert alert-danger py-2 small mb-0';
+        alertEl.textContent = 'Please enter an instruction.';
+        return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
+    alertEl.style.display = 'none';
+
+    bootstrap.Modal.getInstance(document.getElementById('reportModal')).hide();
+    addMsg('docsMsgs', 'user', `📝 Generate report: ${esc(title || '(untitled)')}`, false, true);
+    showTyping('docsMsgs', true);
+
+    try {
+        const r = await fetch('/api/docs/report', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json','X-CSRFToken': csrf()},
+            body: JSON.stringify({
+                title, instruction, format: fmt,
+                doc_ids: Array.from(selectedDocIds),
+            })
+        });
+        const j = await r.json();
+        removeTyping('docsMsgs');
+        if (j.error){
+            addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(j.error)}</span>`, true, true);
+        } else {
+            const html = `
+                <div class="report-card">
+                    <div class="hd">
+                        <div>
+                            <h4>📄 ${esc(j.title)}</h4>
+                            <small>${(j.size_bytes/1024).toFixed(1)} KB · ${esc(j.format.toUpperCase())}</small>
+                        </div>
+                        <a class="dl-btn" href="${j.download_url}" download>⬇ Download</a>
+                    </div>
+                    <div class="bd">${mdToHtml(j.body || '')}</div>
+                </div>`;
+            addMsg('docsMsgs', 'ai', html, false, true);
+            loadReports();
+        }
+    } catch (e) {
+        removeTyping('docsMsgs');
+        addMsg('docsMsgs', 'ai', `<span style="color:var(--red)">⚠ ${esc(e.message)}</span>`, true, true);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-magic me-1"></i>Generate';
+    }
+}
+
+async function loadReports(){
+    try {
+        const r = await fetch('/api/docs/reports');
+        reports = await r.json();
+        renderReportsList();
+    } catch (e) { console.error(e); }
+}
+function renderReportsList(){
+    const el = document.getElementById('reportList');
+    if (!reports.length){
+        el.innerHTML = '<div class="text-center" style="padding:14px 8px;color:var(--muted);font-size:11px">No reports yet</div>';
+        return;
+    }
+    el.innerHTML = reports.map(r => `
+        <div class="doc-item" onclick="window.location.href='/api/docs/report/${r.id}/download'">
+            <span style="color:var(--docs-accent)">📄</span>
+            <div style="flex:1;min-width:0">
+                <div class="fn">${esc(r.title)}</div>
+                <div class="meta">${new Date(r.created_at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})} · ${(r.size_bytes/1024).toFixed(0)} KB</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+/* ── Markdown → HTML (very small subset, enough for reports) ── */
+function mdToHtml(md){
+    if (!md) return '';
+    let h = esc(md);
+    // Code blocks first
+    h = h.replace(/```([\s\S]*?)```/g, (_,c) => `<pre>${c}</pre>`);
+    // Headings
+    h = h.replace(/^###### (.*)$/gm, '<h3>$1</h3>')
+         .replace(/^##### (.*)$/gm,  '<h3>$1</h3>')
+         .replace(/^#### (.*)$/gm,   '<h3>$1</h3>')
+         .replace(/^### (.*)$/gm,    '<h3>$1</h3>')
+         .replace(/^## (.*)$/gm,     '<h2>$1</h2>')
+         .replace(/^# (.*)$/gm,      '<h1>$1</h1>');
+    // Bold / italic / inline code
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+         .replace(/(^|\W)\*(?!\s)(.+?)\*/g, '$1<em>$2</em>')
+         .replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Lists
+    h = h.replace(/^\s*[-*+] (.*)$/gm, '<li>$1</li>')
+         .replace(/^\s*\d+\. (.*)$/gm, '<li>$1</li>');
+    // Group consecutive li into ul
+    h = h.replace(/(<li>[\s\S]+?<\/li>)(?![\s\S]*?<li>)/g, m => `<ul>${m}</ul>`);
+    // Paragraphs (blank-line separated)
+    h = h.split(/\n{2,}/).map(p => {
+        if (/^\s*<(h\d|ul|pre|li)/.test(p)) return p;
+        return p.trim() ? `<p>${p.replace(/\n/g,'<br>')}</p>` : '';
+    }).join('');
+    return h;
+}
+
+/* Load docs on first paint in case the user lands straight on docs mode */
+window.addEventListener('DOMContentLoaded', () => {
+    // Preload docs but stay in infra mode
+    loadDocs();
+});
+</script>
+
+</body>
+</html>

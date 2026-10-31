@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>WE DataCenter | vCenter Dashboard</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%231a4a6e'%3E%3Cpath d='M4 19h16a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2zm0-8h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2z'/%3E%3C/svg%3E">
+    <link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/vendor/bootstrap-icons/bootstrap-icons.css">
+    <link rel="stylesheet" href="/static/vendor/fontawesome/css/all.min.css">
+    <style>
+        /* ----- BASE & STICKY ELEMENTS ----- */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        /* ----- LIGHT THEME (default) ----- */
+        :root {
+            color-scheme: light;
+            --bg-body: #eef2fa;
+            --bg-card: #ffffff;
+            --bg-card-alt: #f8f9fc;
+            --bg-table-header: #eef2f7;
+            --bg-navbar: linear-gradient(135deg, #0b2b3f 0%, #1a4a6e 100%);
+            --bg-selection: #e8f0fe;
+            --text-primary: #1a2c3e;
+            --text-secondary: #4b5563;
+            --text-muted: #6b7280;
+            --border-color: #dee2e6;
+            --shadow-color: rgba(0,0,0,0.08);
+            --bg-resource-card: linear-gradient(135deg, #1a2c3e 0%, #0f2b3b 100%);
+            --bg-vcenter-tag: rgba(255,255,255,0.15);
+            --selected-row: #cfe2ff;
+            --selected-row-hover: #b6d4fe;
+            --footer-bg: #0d1117;
+            --footer-border: #21262d;
+            --footer-text: #f0f6fc;
+            --footer-text-muted: #9aa4b2;
+            --table-hover: #f0f6ff;
+            --progress-bg: #e2e8f0;
+            --control-bar-bg: #ffffff;
+            --table-container-bg: #ffffff;
+        }
+
+        /* ----- DARK THEME ----- */
+        [data-theme="dark"] {
+            color-scheme: dark;
+            --bg-body: #0d1117;
+            --bg-card: #161b22;
+            --bg-card-alt: #1c2333;
+            --bg-table-header: #1c2333;
+            --bg-navbar: linear-gradient(135deg, #0d1117 0%, #1a2332 100%);
+            --bg-selection: #1c2333;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6b7280;
+            --border-color: #30363d;
+            --shadow-color: rgba(0,0,0,0.4);
+            --bg-resource-card: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+            --bg-vcenter-tag: rgba(255,255,255,0.08);
+            --selected-row: #1c3a5e;
+            --selected-row-hover: #1a4a6e;
+            --footer-bg: #0d1117;
+            --footer-border: #21262d;
+            --footer-text: #f0f6fc;
+            --footer-text-muted: #9aa4b2;
+            --table-hover: #1c2333;
+            --progress-bg: #30363d;
+            --control-bar-bg: #161b22;
+            --table-container-bg: #161b22;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-body);
+            color: var(--text-primary);
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+
+        /* Sticky navbar */
+        .navbar {
+            background: var(--bg-navbar);
+            padding: 12px 24px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 1050;
+            transition: background 0.3s ease;
+        }
+        .navbar-brand { color: white !important; font-weight: 700; font-size: 1.4rem; }
+        
+        /* FIX: Scoped ONLY to the top navbar so it doesn't affect Admin Panel tabs */
+        .navbar .nav-link {
+            color: rgba(255,255,255,0.85) !important;
+            transition: all 0.2s;
+            border-radius: 8px;
+            padding: 4px 10px;
+        }
+        .navbar .nav-link:hover {
+            color: white !important;
+            background: rgba(255,255,255,0.1);
+            transform: translateY(-1px);
+        }
+
+        /* FIX: Admin Panel Tabs (Users, Instances, Hypervisor Types) */
+        .container-fluid .nav-tabs .nav-link,
+        .container-fluid .nav-pills .nav-link {
+            color: var(--text-secondary) !important;
+            transition: all 0.2s;
+        }
+        .container-fluid .nav-tabs .nav-link:hover,
+        .container-fluid .nav-pills .nav-link:hover {
+            color: var(--text-primary) !important;
+            background-color: var(--bg-card-alt);
+        }
+        .container-fluid .nav-tabs .nav-link.active,
+        .container-fluid .nav-pills .nav-link.active {
+            color: var(--text-primary) !important;
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+        }
+        /* Fix for the tab badges (the "—" icons) */
+        .container-fluid .nav-tabs .badge,
+        .container-fluid .nav-pills .badge {
+            background-color: var(--text-secondary) !important;
+            color: var(--bg-card) !important;
+        }
+
+        /* Theme toggle button in navbar */
+        .theme-toggle-btn {
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: #fff !important;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.1rem;
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+        .theme-toggle-btn:hover {
+            background: rgba(255,255,255,0.2);
+            transform: rotate(30deg);
+        }
+
+        /* Fix navbar toggler icon for mobile */
+        .navbar-toggler { border-color: rgba(255,255,255,0.35); }
+        .navbar-toggler:focus { box-shadow: 0 0 0 0.2rem rgba(255,255,255,0.25); }
+        .navbar-toggler-icon {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255,255,255,0.9)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+        }
+
+        .container-fluid { padding: 20px 24px; }
+
+        /* Control bar */
+        .control-bar {
+            background: var(--control-bar-bg);
+            border-radius: 20px;
+            padding: 12px 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            color: var(--text-primary);
+            transition: background 0.3s ease, box-shadow 0.3s ease, color 0.3s ease;
+        }
+        .control-group {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 12px;
+        }
+        .btn {
+            white-space: nowrap;
+            transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+        }
+        .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+        .btn-outline-primary {
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        .btn-outline-primary:hover {
+            background: var(--bg-card-alt);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+
+        /* Platform filter pills */
+        .platform-filter-btn {
+            padding: 2px 8px;
+            font-size: 0.7rem;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+            color: var(--text-secondary);
+            background: transparent;
+        }
+        .platform-filter-btn:hover { background: var(--bg-card-alt); color: var(--text-primary); }
+        .platform-filter-btn.active {
+            background: #1a4a6e;
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(26,74,110,0.28);
+        }
+
+        /* Form selects */
+        .form-select-sm {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+            transition: background 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+        }
+        .form-select-sm:focus {
+            border-color: #1a4a6e;
+            box-shadow: 0 0 0 0.2rem rgba(26,74,110,0.25);
+        }
+        .form-select-sm option {
+            background-color: var(--bg-card);
+            color: var(--text-primary);
+        }
+
+        /* Table container */
+        .table-container {
+            background: var(--table-container-bg);
+            border-radius: 20px;
+            overflow: auto;
+            box-shadow: 0 2px 8px var(--shadow-color);
+            transition: background 0.3s ease, box-shadow 0.3s ease;
+        }
+        .custom-table {
+            margin-bottom: 0;
+            font-size: 0.7rem;
+            white-space: nowrap;
+            color: var(--text-primary);
+        }
+        .custom-table thead th {
+            position: sticky;
+            top: 0;
+            background-color: var(--bg-table-header);
+            z-index: 10;
+            padding: 10px 8px;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border-color);
+            color: var(--text-primary);
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        .custom-table tbody td {
+            padding: 8px;
+            vertical-align: middle;
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        .custom-table tbody tr:hover { background: var(--table-hover); }
+
+        /* Progress bar inside table */
+        .progress-micro {
+            background: var(--progress-bg);
+            border-radius: 20px;
+            height: 4px;
+            width: 80px;
+            overflow: hidden;
+            display: inline-block;
+            margin-left: 6px;
+            transition: background 0.3s ease;
+        }
+        .progress-fill-micro {
+            height: 4px;
+            width: 0%;
+            border-radius: 20px;
+            transition: width 0.6s ease;
+        }
+
+        /* Selection info */
+        .selection-info {
+            background: var(--bg-selection);
+            border-radius: 20px;
+            padding: 10px 20px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            color: var(--text-primary);
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+        .selected-count { font-weight: 600; color: var(--text-primary); }
+        .clear-selection { cursor: pointer; color: #dc2626; font-size: 0.75rem; }
+
+        /* Footer */
+        .we-footer {
+            position: relative;
+            margin-top: 60px;
+            background: var(--footer-bg);
+            border-top: 1px solid var(--footer-border);
+            overflow: hidden;
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+            transition: background 0.3s ease, border-color 0.3s ease;
+        }
+        .we-footer::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent 0%, #2563eb 20%, #7c3aed 50%, #2563eb 80%, transparent 100%);
+            opacity: .7;
+        }
+        .we-footer-main {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+            padding: 18px 28px 14px;
+        }
+        .we-identity {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .we-logo-mark {
+            position: relative;
+            width: 44px;
+            height: 44px;
+            flex-shrink: 0;
+        }
+        .we-logo-mark-inner {
+            width: 44px;
+            height: 44px;
+            background: linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 900;
+            color: #fff;
+            letter-spacing: -1px;
+            box-shadow: 0 0 0 1px rgba(124,58,237,.3), 0 4px 16px rgba(37,99,235,.35), inset 0 1px 0 rgba(255,255,255,.15);
+        }
+        .we-logo-mark::after {
+            content: '';
+            position: absolute;
+            inset: -3px;
+            border-radius: 15px;
+            background: linear-gradient(135deg, rgba(37,99,235,.3), rgba(124,58,237,.3));
+            z-index: -1;
+            filter: blur(6px);
+        }
+        .we-team-name {
+            display: block;
+            font-size: 13px;
+            font-weight: 800;
+            color: var(--footer-text);
+            line-height: 1.25;
+        }
+        .we-team-sub {
+            display: block;
+            font-size: 10.5px;
+            color: var(--footer-text-muted);
+            margin-top: 1px;
+        }
+        .we-credit {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .we-credit-app {
+            font-size: 12px;
+            font-weight: 700;
+            color: #c9d1d9;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .we-credit-meta {
+            font-size: 10px;
+            color: var(--footer-text-muted);
+            display: flex;
+            align-items: center;
+            gap: 0;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .we-stack {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .we-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10.5px;
+            font-weight: 600;
+            padding: 4px 11px;
+            border-radius: 20px;
+            border: 1px solid transparent;
+            transition: opacity .2s;
+        }
+        .we-pill-python  { background: rgba(59,130,246,.1); color: #60a5fa; border-color: rgba(59,130,246,.2); }
+        .we-pill-flask   { background: rgba(156,163,175,.08); color: #9ca3af; border-color: rgba(156,163,175,.15); }
+        .we-pill-ansible { background: rgba(124,58,237,.12); color: #a78bfa; border-color: rgba(124,58,237,.22); }
+        .we-pill-vmware  { background: rgba(16,185,129,.1);  color: #34d399; border-color: rgba(16,185,129,.2); }
+        .we-footer-strip {
+            border-top: 1px solid var(--footer-border);
+            padding: 7px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .we-footer-strip-left {
+            font-size: 10px;
+            color: var(--footer-text-muted);
+        }
+        .we-footer-strip-right {
+            font-size: 10px;
+            color: var(--footer-text-muted);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .we-version-badge {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 9px;
+            font-weight: 600;
+            color: #8b949e;
+            font-family: 'Courier New', monospace;
+        }
+        html { scroll-behavior: smooth; }
+        .form-select-sm, .btn-sm { font-size: 0.7rem; }
+        .form-select-sm { width: auto !important; min-width: 130px; }
+
+        /* ==========================================================
+           THEME-SAFE TEXT / SURFACES
+           Makes every word readable in BOTH light and dark mode.
+           ========================================================== */
+
+        /* 1. Hook Bootstrap 5.3's own CSS variables into our theme */
+        :root,
+        [data-theme="dark"] {
+            --bs-body-color: var(--text-primary);
+            --bs-body-bg: var(--bg-body);
+            --bs-emphasis-color: var(--text-primary);
+            --bs-secondary-color: var(--text-secondary);
+            --bs-secondary-bg: var(--bg-card-alt);
+            --bs-tertiary-bg: var(--bg-table-header);
+            --bs-border-color: var(--border-color);
+            --bs-heading-color: var(--text-primary);
+            --bs-link-color: #3b82f6;
+            --bs-link-hover-color: #60a5fa;
+        }
+
+        /* 2. Bootstrap text utilities that are hard-coded for ONE theme */
+        /*    DARK MODE: "dark" text must turn light */
+        [data-theme="dark"] .text-dark,
+        [data-theme="dark"] .text-black,
+        [data-theme="dark"] .text-body,
+        [data-theme="dark"] .text-body-secondary,
+        [data-theme="dark"] .text-black-50,
+        [data-theme="dark"] .text-reset {
+            color: var(--text-primary) !important;
+        }
+        [data-theme="dark"] .text-muted,
+        [data-theme="dark"] .text-secondary {
+            color: var(--text-secondary) !important;
+        }
+
+        /*    LIGHT MODE: "white"/"light" text must turn dark.
+              Scoped to the page content only, so the navbar keeps
+              its white text (the navbar is a sibling of this div). */
+        html:not([data-theme="dark"]) body > .container-fluid .text-white,
+        html:not([data-theme="dark"]) body > .container-fluid .text-light,
+        html:not([data-theme="dark"]) body > .container-fluid .text-white-50,
+        html:not([data-theme="dark"]) body > .container-fluid .text-light-emphasis {
+            color: var(--text-primary) !important;
+        }
+
+        /* 3. Background utilities */
+        [data-theme="dark"] .bg-white,
+        [data-theme="dark"] .bg-light {
+            background-color: var(--bg-card) !important;
+            color: var(--text-primary) !important;
+        }
+
+        /* 4. Cards / forms / modals / dropdowns / tables in dark mode */
+        [data-theme="dark"] .card,
+        [data-theme="dark"] .modal-content,
+        [data-theme="dark"] .offcanvas,
+        [data-theme="dark"] .dropdown-menu,
+        [data-theme="dark"] .list-group-item {
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .card-header,
+        [data-theme="dark"] .card-footer,
+        [data-theme="dark"] .modal-header,
+        [data-theme="dark"] .modal-footer {
+            background-color: var(--bg-card-alt);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .form-control,
+        [data-theme="dark"] .form-select,
+        [data-theme="dark"] .input-group-text {
+            background-color: var(--bg-card-alt);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .form-control::placeholder { color: var(--text-muted); }
+        [data-theme="dark"] .dropdown-item { color: var(--text-primary); }
+        [data-theme="dark"] .dropdown-item:hover,
+        [data-theme="dark"] .dropdown-item:focus {
+            background-color: var(--bg-card-alt);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .dropdown-divider { border-color: var(--border-color); }
+        [data-theme="dark"] .table {
+            --bs-table-color: var(--text-primary);
+            --bs-table-bg: transparent;
+            --bs-table-border-color: var(--border-color);
+            --bs-table-hover-color: var(--text-primary);
+            --bs-table-hover-bg: var(--table-hover);
+        }
+        [data-theme="dark"] .btn-close { filter: invert(1) grayscale(100%) brightness(200%); }
+        [data-theme="dark"] hr { border-color: var(--border-color); opacity: 1; }
+        [data-theme="dark"] .pagination .page-link {
+            background-color: var(--bg-card);
+            border-color: var(--border-color);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .text-bg-light { background-color: var(--bg-card-alt) !important; color: var(--text-primary) !important; }
+
+        /* 5. Footer contrast — these greys were almost invisible on #0d1117 */
+        .we-credit-meta,
+        .we-footer-strip-left,
+        .we-footer-strip-right { color: var(--footer-text-muted); }
+        .we-version-badge { color: #8b949e; }
+
+        @media (max-width: 1100px) {
+            .control-bar { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+
+<nav class="navbar navbar-expand-lg">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/"><i class="bi bi-display me-2"></i>WE DataCenter</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarNav">
+            <ul class="navbar-nav ms-auto">
+                <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+                <li class="nav-item"><a class="nav-link" href="/hosts">Hosts</a></li>
+                <li class="nav-item"><a class="nav-link" href="/clusters">Clusters</a></li>
+                <li class="nav-item"><a class="nav-link" href="/datastores">Datastores</a></li>
+                <li class="nav-item"><a class="nav-link" href="/vms">VMs</a></li>
+                <li class="nav-item"><a class="nav-link" href="/vcenters">vCenters</a></li>
+                <li class="nav-item"><a class="nav-link" href="/create_vm">VMBuilDer</a></li>
+                <li class="nav-item"><a class="nav-link" href="/reporting">Reporting</a></li>
+                <li class="nav-item">
+                    <a class="nav-link position-relative" href="/lifecycle">
+                        Lifecycle
+                        <span id="lifecycle-nav-badge" class="badge bg-warning text-dark rounded-pill d-none" style="font-size:0.65rem;">0</span>
+                    </a>
+                </li>
+                {% if session.role == "superadmin" %}
+                <li class="nav-item"><a class="nav-link" href="/admin">Admin</a></li>
+                {% endif %}
+                <li class="nav-item"><a class="nav-link" href="/logout">Logout</a></li>
+            </ul>
+            <div class="d-flex align-items-center">
+                <div class="ms-3 small" style="color:#fff;">
+                    <i class="bi bi-person-circle me-1"></i> {{ session.username }}
+                    {% if session.role == "superadmin" %}
+                        <span class="badge bg-danger ms-1">Super Admin</span>
+                    {% else %}
+                        <span class="badge bg-secondary ms-1">User</span>
+                    {% endif %}
+                </div>
+                <!-- THEME TOGGLE BUTTON -->
+                <button class="theme-toggle-btn" id="themeToggle" title="Toggle Theme">
+                    <i class="bi bi-moon-fill" id="themeIcon"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<div class="container-fluid">
+    {% block content %}{% endblock %}
+</div>
+
+<footer class="we-footer">
+    <div class="we-footer-main">
+        <div class="we-identity">
+            <div class="we-logo-mark">
+                <div class="we-logo-mark-inner">WE</div>
+            </div>
+            <div class="we-id-text">
+                <span class="we-team-name">WE DataCenter Team</span>
+                <span class="we-team-sub">Infrastructure &amp; Automation · VMware vSphere · Ansible</span>
+            </div>
+        </div>
+        <div class="we-credit">
+            <div class="we-credit-app">
+                <i class="bi bi-display"></i> vCenter Dashboard
+            </div>
+            <div class="we-credit-meta">
+                Built with Flask &amp; Ansible · Open for internal use · &copy; 2026
+            </div>
+        </div>
+        <div class="we-stack">
+            <span class="we-pill we-pill-python"><i class="bi bi-filetype-py"></i>Python</span>
+            <span class="we-pill we-pill-flask"><i class="bi bi-lightning-fill"></i>Flask</span>
+            <span class="we-pill we-pill-ansible"><i class="bi bi-gear-fill"></i>Ansible</span>
+            <span class="we-pill we-pill-vmware"><i class="bi bi-server"></i>VMware</span>
+        </div>
+    </div>
+    <div class="we-footer-strip">
+        <div class="we-footer-strip-left">
+            Designed &amp; developed by <strong>WE DataCenter Team</strong> &nbsp;—&nbsp; For internal infrastructure operations only
+        </div>
+        <div class="we-footer-strip-right">
+            <span class="we-version-badge">v1.3</span>
+            <i class="bi bi-circle-fill" style="font-size:5px; color:#238636;"></i> System Online
+        </div>
+    </div>
+</footer>
+
+<script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="/static/js/main.js"></script>
+<script>
+    /* ---------- CSRF: attach token to every same-origin, state-changing fetch() call automatically ---------- */
+    (function() {
+        const token = document.querySelector('meta[name="csrf-token"]')?.content;
+        const originalFetch = window.fetch;
+        window.fetch = function(input, init) {
+            init = init || {};
+            const method = (init.method || 'GET').toUpperCase();
+            if (token && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+                init.headers = new Headers(init.headers || {});
+                if (!init.headers.has('X-CSRFToken')) {
+                    init.headers.set('X-CSRFToken', token);
+                }
+            }
+            return originalFetch(input, init);
+        };
+    })();
+
+    /* ---------- THEME TOGGLE ---------- */
+    (function() {
+        const html = document.documentElement;
+        const icon = document.getElementById('themeIcon');
+
+        function applyTheme(theme) {
+            if (theme === 'dark') {
+                html.setAttribute('data-theme', 'dark');
+                if (icon) icon.className = 'bi bi-sun-fill';
+            } else {
+                html.removeAttribute('data-theme');
+                if (icon) icon.className = 'bi bi-moon-fill';
+            }
+        }
+
+        /* Apply saved theme immediately (avoids flash + wrong icon) */
+        applyTheme(localStorage.getItem('theme') === 'dark' ? 'dark' : 'light');
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const themeBtn = document.getElementById('themeToggle');
+            if (!themeBtn) return;
+            themeBtn.addEventListener('click', function() {
+                const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+                localStorage.setItem('theme', next);
+            });
+        });
+    })();
+
+    /* ---------- LIFECYCLE NAV BADGE ---------- */
+    (function() {
+        const badge = document.getElementById('lifecycle-nav-badge');
+        if (!badge) return;
+        fetch('/api/lifecycle/summary')
+            .then(r => r.json())
+            .then(s => {
+                const total = (s.pending_decommission || 0) + (s.restored || 0);
+                if (total > 0) {
+                    badge.textContent = total;
+                    badge.classList.remove('d-none');
+                }
+            })
+            .catch(() => {});
+    })();
+</script>
+</body>
+</html>

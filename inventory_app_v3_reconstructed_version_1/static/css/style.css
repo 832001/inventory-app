@@ -1,0 +1,283 @@
+/* =========================
+   GLOBAL
+========================= */
+body {
+    font-family: "Segoe UI", Tahoma, sans-serif;
+    background-color: #f4f6f9;
+    margin: 0;
+    padding: 10px;
+    color: #333;
+    overflow-x: hidden;
+}
+
+/* Remove Bootstrap limits */
+.container,
+.container-fluid {
+    max-width: 100% !important;
+    width: 100% !important;
+}
+
+/* Remove spacing issues */
+.row {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+/* =========================
+   TABLE FULL WIDTH (NO SCROLL)
+========================= */
+.table-container {
+    width: 100%;
+    background: white;
+    border-radius: 8px;
+    padding: 5px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+/* Table auto-fit */
+.custom-table {
+    width: 100%;
+    table-layout: fixed; /* 🔥 key */
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+/* Header */
+thead th {
+    background: #1f2937 !important;
+    color: white !important;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+/* Cells */
+th, td {
+    padding: 5px;
+    text-align: left;
+    white-space: normal; /* wrap */
+    word-break: break-word;
+}
+
+/* Reduce column width */
+.custom-table th,
+.custom-table td {
+    max-width: 120px;
+}
+
+/* Important columns bigger */
+.custom-table td:nth-child(1) { max-width: 150px; } /* Host */
+.custom-table td:nth-child(8) { max-width: 200px; } /* CPU Model */
+
+/* Zebra */
+tbody tr:nth-child(even) {
+    background-color: #f9fafb;
+}
+
+/* Hover */
+tbody tr:hover {
+    background-color: #eef2ff;
+}
+
+/* Status colors */
+.status-connected {
+    color: green;
+    font-weight: bold;
+}
+
+.status-disconnected {
+    color: red;
+    font-weight: bold;
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .custom-table {
+        font-size: 10px;
+    }
+
+    th, td {
+        padding: 4px;
+    }
+}
+
+/* Dashboard table improvements */
+.dashboard-table td {
+    vertical-align: top;
+}
+
+/* Progress bars */
+.progress {
+    width: 120px;
+    height: 14px;
+    background: #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 5px;
+}
+
+.progress-bar {
+    height: 100%;
+    color: white;
+    font-size: 10px;
+    text-align: center;
+    line-height: 14px;
+}
+
+/* Small text under bars */
+td small {
+    font-size: 10px;
+    color: #555;
+}
+
+
+/* =========================
+   LOGIN PAGE
+========================= */
+
+.login-body {
+    height: 100vh;
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Container */
+.login-container {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Card */
+.login-box {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    width: 350px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    text-align: center;
+}
+
+/* Title */
+.login-title {
+    margin: 0;
+    font-size: 24px;
+    font-weight: bold;
+    color: #1f2937;
+}
+
+.login-subtitle {
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 20px;
+}
+
+/* Inputs */
+.input-group {
+    text-align: left;
+    margin-bottom: 0px;
+}
+
+.input-group label {
+    font-size: 12px;
+    color: #374151;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.input-group input {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: 0.2s;
+}
+
+.input-group input:focus {
+    border-color: #2563eb;
+    outline: none;
+    box-shadow: 0 0 5px rgba(37,99,235,0.3);
+}
+
+/* Button */
+.login-btn {
+    width: 100%;
+    padding: 10px;
+    background: #2563eb;
+    border: none;
+    color: white;
+    font-size: 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.login-btn:hover {
+    background: #1e40af;
+}
+
+/* Error */
+.login-error {
+    margin-top: 15px;
+    color: #dc2626;
+    font-size: 13px;
+    background: #fee2e2;
+    padding: 8px;
+    border-radius: 6px;
+}
+
+
+/* =========================
+   NAVBAR CUSTOM
+========================= */
+
+.custom-navbar {
+    background: linear-gradient(90deg, #111827, #1f2937);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.navbar-brand {
+    font-size: 18px;
+}
+
+/* nav links */
+.navbar .nav-link {
+    color: #d1d5db !important;
+    font-size: 13px;
+    margin-right: 5px;
+    transition: 0.2s;
+}
+
+.navbar .nav-link:hover {
+    color: #ffffff !important;
+    background: rgba(255,255,255,0.1);
+    border-radius: 5px;
+}
+
+/* user badge */
+.badge {
+    font-size: 10px;
+    padding: 4px 6px;
+}
+
+/* dropdown */
+.dropdown-menu {
+    font-size: 13px;
+    border-radius: 8px;
+}
+
+.dropdown-item:hover {
+    background: #f3f4f6;
+}
+/* Default behavior - instant jump */
+html {
+    scroll-behavior: auto;
+}
+
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}

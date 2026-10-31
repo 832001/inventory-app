@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="control-bar">
+    <div class="control-group" id="runPickerBox"></div>
+    <div class="control-group">
+        <div class="platform-filter" id="platformFilter"></div>
+    </div>
+    <div class="control-group">
+        <div class="input-group input-group-sm" style="width:240px;">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input type="text" id="vmSearch" class="form-control" placeholder="Search VMs…">
+        </div>
+        <button class="btn btn-success btn-sm" onclick="exportTableToCSV()">
+            <i class="bi bi-download me-1"></i>Export CSV
+        </button>
+    </div>
+</div>
+
+<div class="alert alert-info py-2 px-3 small d-flex align-items-center justify-content-between">
+    <span>
+        <i class="bi bi-device-hdd me-1"></i>Datastore: <b id="dsName">-</b>
+        <span id="dsClusterWrap" style="display:none;"> &middot; Cluster: <b id="dsCluster"></b></span>
+        <span id="dsEnvWrap" style="display:none;"> &middot; Environment: <b id="dsEnv"></b></span>
+    </span>
+    <a href="#" id="backLink"><i class="bi bi-arrow-left"></i> Back to datastores</a>
+</div>
+
+<div class="table-container">
+    <table class="table table-bordered custom-table">
+        <thead>
+            <tr>
+                <th>Platform</th><th>VM Name</th><th>Environment</th><th>Site</th><th>CPU</th>
+                <th>RAM (GB)</th><th>OS</th><th>IP Address</th><th>Total Disk (GB)</th>
+            </tr>
+        </thead>
+        <tbody id="dsVMsTable">
+            <tr><td colspan="9" class="text-center text-muted py-3">
+                <div class="spinner-border spinner-border-sm me-2"></div>Loading VMs…
+            </td></tr>
+        </tbody>
+    </table>
+</div>
+
+<script src="{{ url_for('static', filename='js/hv_common.js') }}"></script>
+<script>
+(function () {
+    let allVMs = [];
+    let searchTerm = "";
+    const COLS = 9;
+    const qp = new URLSearchParams(window.location.search);
+    const datastore = qp.get('datastore') || "";
+    const cluster = qp.get('cluster') || "";
+    const vcenter = qp.get('vcenter') || "";
+
+    function visible() {
+        return allVMs.filter(vm => {
+            if (!HV.rowMatches(vm, 'vcenter_name')) return false;   // platform filter (env is already applied server-side)
+            if (searchTerm) {
+                const hay = [vm.vm_name, vm.ip_address, vm.os].map(x => (x || '').toLowerCase());
+                if (!hay.some(x => x.includes(searchTerm))) return false;
+            }
+            return true;
+        });
+    }
+
+    function renderTable() {
+        const tbody = document.getElementById('dsVMsTable');
+        const rows = visible();
+        if (!rows.length) {
+            tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3">No VMs found for this datastore.</td></tr>`;
+            return;
+        }
+        const esc = HV.esc, n = HV.toNum;
+        tbody.innerHTML = rows.map(vm => {
+            const name = vm.vm_name || '-';
+            let link = `/vm/${encodeURIComponent(name)}`;
+            if (vm.vm_uuid) link += `?uuid=${encodeURIComponent(vm.vm_uuid)}`;
+            else if (vm.ip_address) link += `?ip=${encodeURIComponent(vm.ip_address)}`;
+            return `<tr>
+                <td>${HV.platformCell(vm._pkey)}</td>
+                <td><a href="${link}" class="text-primary fw-semibold">${esc(name)}</a></td>
+                <td>${esc(vm.vcenter_name || '-')}</td>
+                <td>${esc(vm.site_code || '-')}</td>
+                <td>${n(vm.cpu)}</td>
+                <td>${(n(vm.ram_mb) / 1024).toFixed(1)} GB</td>
+                <td>${esc(vm.os || '-')}</td>
+                <td>${esc(vm.ip_address || '-')}</td>
+                <td>${n(vm.total_disk_gb).toFixed(1)} GB</td>
+            </tr>`;
+        }).join('');
+    }
+
+    function csvCell(v) {
+        const s = String(v === undefined || v === null ? '' : v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }
+    window.exportTableToCSV = function () {
+        const rows = visible();
+        if (!rows.length) { alert("No data to export"); return; }
+        const csv = [["Platform", "VM Name", "Environment", "Site", "CPU", "RAM (GB)", "OS", "IP Address", "Total Disk (GB)"]];
+        rows.forEach(vm => csv.push([
+            (HV.state.platforms[vm._pkey] || {}).label || vm.platform || '', vm.vm_name || '-', vm.vcenter_name || '-',
+            vm.site_code || '-', HV.toNum(vm.cpu), (HV.toNum(vm.ram_mb) / 1024).toFixed(1),
+            vm.os || '-', vm.ip_address || '-', HV.toNum(vm.total_disk_gb).toFixed(1)
+        ]));
+        const blob = new Blob([csv.map(r => r.map(csvCell).join(",")).join("\n")], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `datastore_vms_${(datastore || 'export').replace(/[^A-Za-z0-9_.-]/g, '_')}.csv`;
+        a.click(); URL.revokeObjectURL(a.href);
+    };
+
+    function loadData() {
+        const tbody = document.getElementById("dsVMsTable");
+        if (!datastore) {
+            tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-danger py-3">No datastore specified</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2"></div>Loading VMs…</td></tr>`;
+        fetch("/api/datastore_vms" + HV.apiQuery({ datastore: datastore, cluster: cluster }))
+            .then(res => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+            .then(data => {
+                allVMs = HV.tagRows(Array.isArray(data) ? data : []);
+                HV.renderPlatformFilter(allVMs);
+                renderTable();
+            })
+            .catch(err => {
+                console.error("Error loading datastore VMs:", err);
+                tbody.innerHTML = `<tr><td colspan="${COLS}" class="text-center text-danger py-3">Failed to load VMs</td></tr>`;
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('dsName').textContent = datastore || '(none)';
+        if (cluster) { document.getElementById('dsClusterWrap').style.display = ''; document.getElementById('dsCluster').textContent = cluster; }
+        if (vcenter) { document.getElementById('dsEnvWrap').style.display = '';     document.getElementById('dsEnv').textContent = vcenter; }
+        document.getElementById('vmSearch').addEventListener('input', e => { searchTerm = e.target.value.toLowerCase(); renderTable(); });
+        HV.init({ pickerBox: 'runPickerBox', filterBox: 'platformFilter',
+                  onRunChange: loadData, onFilterChange: renderTable })
+          .then(() => {
+              document.getElementById('backLink').href = HV.pageUrl('/datastores', { cluster: cluster });
+              loadData();
+          });
+    });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,3812 @@
+from flask import Flask, jsonify, request, render_template, session, redirect, url_for, Response, stream_with_context
+from werkzeug.security import generate_password_hash, check_password_hash
+from decimal import Decimal
+import subprocess
+import pymysql
+import os
+import io
+import json
+import uuid
+import threading
+import time
+import csv
+import numpy as np
+import pandas as pd
+from sklearn.linear_model import LinearRegression
+import joblib
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-in-production")
+
+# ─────────────────────────────────────────────────────────────
+#  CONFIG
+# ─────────────────────────────────────────────────────────────
+PLAYBOOK_CREATE_VM_VMWARE  = "/root/project/playbooks/create_vm_vmware.yml"
+PLAYBOOK_CREATE_VM_HYPERV  = "/root/project/playbooks/create_vm_hyperv.yml"
+PLAYBOOK_CREATE_VM         = PLAYBOOK_CREATE_VM_VMWARE
+
+# In-memory job store
+vm_jobs = {}
+
+# Directory for ML models
+MODEL_DIR = 'models'
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# ─────────────────────────────────────────────────────────────
+#  AUTH DECORATORS
+# ─────────────────────────────────────────────────────────────
+def login_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def superadmin_required(f):
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get("role") != "superadmin":
+            return "Access Denied", 403
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ─────────────────────────────────────────────────────────────
+#  DB CONNECTION
+# ─────────────────────────────────────────────────────────────
+def get_db_connection():
+    return pymysql.connect(
+        host="10.19.152.234",
+        user="root",
+        password="Happy@year@123",
+        database="vcenter_inventory_V3",
+        cursorclass=pymysql.cursors.DictCursor
+    )
+
+# ─────────────────────────────────────────────────────────────
+#  HELPER FUNCTIONS
+# ─────────────────────────────────────────────────────────────
+def to_float(value):
+    if value is None:
+        return 0.0
+    if isinstance(value, Decimal):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+def get_latest_run_ids():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX(run_id) as max_run FROM vc_runs")
+    vmware_run_id = cursor.fetchone()["max_run"]
+    cursor.execute("SELECT MAX(run_id) as max_run FROM hyperv_runs")
+    hyperv_run_id = cursor.fetchone()["max_run"]
+    cursor.close()
+    conn.close()
+    return vmware_run_id, hyperv_run_id
+
+def get_unified_runs():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT run_id, run_timestamp, 'VMware' as platform,
+               run_id as vmware_run_id, NULL as hyperv_run_id
+        FROM vc_runs
+    """)
+    vmware_runs = cursor.fetchall()
+    cursor.execute("""
+        SELECT run_id, run_timestamp, 'Hyper-V' as platform,
+               NULL as vmware_run_id, run_id as hyperv_run_id
+        FROM hyperv_runs
+    """)
+    hyperv_runs = cursor.fetchall()
+    all_runs = list(vmware_runs) + list(hyperv_runs)
+    all_runs.sort(key=lambda x: x['run_id'], reverse=True)
+    cursor.close()
+    conn.close()
+    return all_runs
+
+def get_aggregated_site_data_unified(run_id_vmware=None, run_id_hyperv=None, site_name=None, vcenter_list=None):
+    """Keep existing implementation – unchanged (works with dashboard)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+    data = []
+
+    def to_num(value):
+        if value is None:
+            return 0.0
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if vcenter_list and len(vcenter_list) > 0:
+        placeholders = ','.join(['%s'] * len(vcenter_list))
+        cursor.execute(f"""
+            SELECT
+                Vcenter as resource_name,
+                ip_vcenter,
+                num_clusters,
+                num_hosts,
+                num_datastores,
+                num_vms,
+                total_cores,
+                used_cores,
+                free_cores,
+                cpu_usage_percent,
+                total_memory_gb,
+                used_memory_gb,
+                free_memory_gb,
+                memory_usage_percent,
+                total_storage_gb,
+                used_storage_gb,
+                free_storage_gb,
+                storage_usage_percent,
+                Subscription_cpu_ratio as subscription_cpu_ratio,
+                Subscription_memory_ratio as subscription_memory_ratio,
+                Subscription_storage_ratio as subscription_storage_ratio,
+                'VMware' as platform
+            FROM vcenter_summary_all_runs
+            WHERE run_id = %s AND Vcenter IN ({placeholders})
+        """, (run_id_vmware, *vcenter_list))
+        for row in cursor.fetchall():
+            data.append({
+                'site_name': site_name or 'VMware',
+                'platform': 'VMware',
+                'resource_name': row['resource_name'],
+                'ip_vcenter': row['ip_vcenter'] or '-',
+                'num_clusters': to_num(row['num_clusters']),
+                'num_hosts': to_num(row['num_hosts']),
+                'num_datastores': to_num(row['num_datastores']),
+                'num_vms': to_num(row['num_vms']),
+                'total_cores': to_num(row['total_cores']),
+                'used_cores': to_num(row['used_cores']),
+                'free_cores': to_num(row['free_cores']),
+                'cpu_usage_percent': to_num(row['cpu_usage_percent']),
+                'total_memory_gb': to_num(row['total_memory_gb']),
+                'used_memory_gb': to_num(row['used_memory_gb']),
+                'free_memory_gb': to_num(row['free_memory_gb']),
+                'memory_usage_percent': to_num(row['memory_usage_percent']),
+                'total_storage_gb': to_num(row['total_storage_gb']),
+                'used_storage_gb': to_num(row['used_storage_gb']),
+                'free_storage_gb': to_num(row['free_storage_gb']),
+                'storage_usage_percent': to_num(row['storage_usage_percent']),
+                'subscription_cpu_ratio': row['subscription_cpu_ratio'] or 'N/A',
+                'subscription_memory_ratio': row['subscription_memory_ratio'] or 'N/A',
+                'subscription_storage_ratio': row['subscription_storage_ratio'] or 'N/A'
+            })
+
+    hyperv_site_map = {
+        'B7': ['TE-HXCLOUD', 'HVUCSX22'],
+        'DR': ['HVMXDR-CLUS', 'HVDR-EXCHCLUS'],
+        'B90': [],
+        'TESTDEV': ['HV-UCSX']
+    }
+    hyperv_cluster_list = hyperv_site_map.get(site_name, [])
+    if hyperv_cluster_list:
+        placeholders = ','.join(['%s'] * len(hyperv_cluster_list))
+        cursor.execute(f"""
+            SELECT
+                Cluster as resource_name,
+                cluster_ip,
+                num_hosts,
+                num_datastores,
+                num_vms,
+                total_cores,
+                used_cores,
+                free_cores,
+                cpu_usage_percent,
+                total_memory_gb,
+                used_memory_gb,
+                free_memory_gb,
+                memory_usage_percent,
+                total_storage_gb,
+                used_storage_gb,
+                free_storage_gb,
+                storage_usage_percent,
+                Subscription_cpu_ratio as subscription_cpu_ratio,
+                Subscription_memory_ratio as subscription_memory_ratio,
+                Subscription_storage_ratio as subscription_storage_ratio,
+                'Hyper-V' as platform
+            FROM hyperv_summary_all_runs
+            WHERE run_id = %s AND Cluster IN ({placeholders})
+        """, (run_id_hyperv, *hyperv_cluster_list))
+        for row in cursor.fetchall():
+            data.append({
+                'site_name': site_name or 'Hyper-V',
+                'platform': 'Hyper-V',
+                'resource_name': row['resource_name'],
+                'ip_vcenter': row['cluster_ip'] or '-',
+                'num_clusters': 1,
+                'num_hosts': to_num(row['num_hosts']),
+                'num_datastores': to_num(row['num_datastores']),
+                'num_vms': to_num(row['num_vms']),
+                'total_cores': to_num(row['total_cores']),
+                'used_cores': to_num(row['used_cores']),
+                'free_cores': to_num(row['free_cores']),
+                'cpu_usage_percent': to_num(row['cpu_usage_percent']),
+                'total_memory_gb': to_num(row['total_memory_gb']),
+                'used_memory_gb': to_num(row['used_memory_gb']),
+                'free_memory_gb': to_num(row['free_memory_gb']),
+                'memory_usage_percent': to_num(row['memory_usage_percent']),
+                'total_storage_gb': to_num(row['total_storage_gb']),
+                'used_storage_gb': to_num(row['used_storage_gb']),
+                'free_storage_gb': to_num(row['free_storage_gb']),
+                'storage_usage_percent': to_num(row['storage_usage_percent']),
+                'subscription_cpu_ratio': row['subscription_cpu_ratio'] or 'N/A',
+                'subscription_memory_ratio': row['subscription_memory_ratio'] or 'N/A',
+                'subscription_storage_ratio': row['subscription_storage_ratio'] or 'N/A'
+            })
+
+    cursor.close()
+    conn.close()
+    return data
+
+# ============================================================================
+#  UNIFIED VMS HELPER (correct column names)
+# ============================================================================
+def get_unified_vms(run_id_vmware=None, run_id_hyperv=None, vcenter_list=None,
+                    host_name=None, cluster_name=None, search_term=None,
+                    page=1, per_page=100):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+    offset = (page - 1) * per_page
+
+    vmware_where = "WHERE vm.run_id = %s"
+    hyperv_where = "WHERE run_id = %s"
+    params_vmware = [run_id_vmware]
+    params_hyperv = [run_id_hyperv]
+
+    if vcenter_list:
+        placeholders = ','.join(['%s'] * len(vcenter_list))
+        vmware_where += f" AND vc.vcenter_name IN ({placeholders})"
+        params_vmware.extend(vcenter_list)
+        hyperv_where += f" AND cluster_name IN ({placeholders})"
+        params_hyperv.extend(vcenter_list)
+
+    if host_name:
+        vmware_where += " AND vm.hostname = %s"
+        params_vmware.append(host_name)
+        hyperv_where += " AND host_name = %s"
+        params_hyperv.append(host_name)
+
+    if cluster_name:
+        hyperv_where += " AND cluster_name = %s"
+        params_hyperv.append(cluster_name)
+
+    if search_term:
+        like = f"%{search_term}%"
+        vmware_where += " AND (vm.vm_name LIKE %s OR vm.ip_address LIKE %s OR vm.os LIKE %s)"
+        params_vmware.extend([like, like, like])
+        hyperv_where += " AND (vm_name LIKE %s OR ip_address LIKE %s OR os LIKE %s)"
+        params_hyperv.extend([like, like, like])
+
+    vmware_query = f"""
+        SELECT
+            vm.vm_name, vm.cpu, vm.ram_mb, vm.os, vm.ip_address,
+            vm.power_state, vm.hostname as host_name, NULL as cluster_name,
+            'VMware' as platform, vc.vcenter_name as vcenter_name, vm.total_disk_gb
+        FROM vm_inventory vm
+        JOIN vcenters vc ON vm.vcenter_id = vc.vcenter_id
+        {vmware_where}
+    """
+
+    hyperv_query = f"""
+        SELECT
+            vm_name, cpu, ram_mb, os, ip_address,
+            power_state, host_name, cluster_name,
+            'Hyper-V' as platform, cluster_name as vcenter_name, total_disk_gb
+        FROM hyperv_vms
+        {hyperv_where}
+    """
+
+    cursor.execute(f"SELECT COUNT(*) as total FROM ({vmware_query} UNION ALL {hyperv_query}) as combined",
+                   params_vmware + params_hyperv)
+    total = cursor.fetchone()["total"]
+
+    full_query = f"""
+        SELECT * FROM (
+            {vmware_query}
+            UNION ALL
+            {hyperv_query}
+        ) as combined
+        ORDER BY platform, vm_name
+        LIMIT %s OFFSET %s
+    """
+    all_params = params_vmware + params_hyperv + [per_page, offset]
+    cursor.execute(full_query, all_params)
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return {"data": results, "total": total, "page": page, "per_page": per_page,
+            "pages": (total + per_page - 1) // per_page}
+
+# ─────────────────────────────────────────────────────────────
+#  PAGE ROUTES
+# ─────────────────────────────────────────────────────────────
+@app.route("/")
+@login_required
+def home():
+    return render_template("new_dashborad.html")
+
+@app.route("/dashboard")
+@login_required
+def dashboard_page():
+    return redirect("dashborad.html")
+
+@app.route("/hosts")
+@login_required
+def hosts_page():
+    return render_template("hosts.html")
+
+@app.route("/clusters")
+@login_required
+def clusterss_page():
+    return render_template("clusters.html")
+
+@app.route("/vcenters")
+@login_required
+def vcenters_page():
+    return render_template("vcenters.html")
+
+@app.route("/vms")
+@login_required
+def vms_page():
+    return render_template("vms.html")
+
+@app.route("/datastore_vms")
+@login_required
+def datastore_vms_page():
+    return render_template("datastore_vms.html")
+
+@app.route("/datastores")
+@login_required
+def datastores_page():
+    return render_template("datastores.html")
+
+@app.route("/health")
+@login_required
+def health():
+    return jsonify({"status": "OK"})
+
+@app.route("/admin")
+@login_required
+@superadmin_required
+def admin_page():
+    return render_template("admin.html")
+
+@app.route("/create_vm", methods=["GET"])
+@login_required
+def create_vm_page():
+    return render_template("create_vm.html")
+
+# ─────────────────────────────────────────────────────────────
+#  LOGIN / LOGOUT
+# ─────────────────────────────────────────────────────────────
+from ldap3 import Server, Connection, ALL
+
+LDAP_SERVER = "ldap://Cairo.TelecomEgypt.corp"
+LDAP_REALM = "Cairo.TelecomEgypt.corp"
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+        authenticated = False
+        role = "user"
+        user_id = None
+        try:
+            server = Server(LDAP_SERVER, get_info=ALL)
+            conn = Connection(server, user=f"{username}@{LDAP_REALM}", password=password, auto_bind=True)
+            authenticated = True
+            print(f"LDAP Login Success: {username}")
+        except Exception as e:
+            print(f"LDAP Authentication Error: {e}")
+        if not authenticated:
+            conn_db = get_db_connection()
+            cursor = conn_db.cursor()
+            cursor.execute("SELECT * FROM users WHERE username=%s", (username,))
+            user = cursor.fetchone()
+            cursor.close()
+            conn_db.close()
+            if user and check_password_hash(user["password_hash"], password):
+                authenticated = True
+                user_id = user["id"]
+                role = user["role"]
+                print(f"Database Login Success: {username}")
+        if authenticated:
+            session["user_id"] = user_id if user_id is not None else 0
+            session["username"] = username
+            session["role"] = role
+            session["logged_in"] = True
+            return redirect(url_for("home"))
+        else:
+            return render_template("login.html", error="Invalid credentials")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+# ─────────────────────────────────────────────────────────────
+#  USER MANAGEMENT (superadmin only)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/create_user", methods=["POST"])
+@login_required
+@superadmin_required
+def create_user():
+    data = request.json
+    username = data["username"]
+    password = generate_password_hash(data["password"])
+    role = data["role"]
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (%s, %s, %s)",
+                   (username, password, role))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"status": "user created"})
+
+@app.route("/api/list_users")
+@login_required
+@superadmin_required
+def list_users():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, role, created_at FROM users ORDER BY id DESC")
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    for row in data:
+        if "created_at" in row and row["created_at"]:
+            row["created_at"] = str(row["created_at"])
+    return jsonify(data)
+
+@app.route("/api/delete_user/<int:user_id>", methods=["DELETE"])
+@login_required
+@superadmin_required
+def delete_user(user_id):
+    if user_id == session.get("user_id"):
+        return jsonify({"status": "error", "message": "Cannot delete your own account"}), 400
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"status": "deleted"})
+
+@app.route("/api/change_password", methods=["POST"])
+@login_required
+@superadmin_required
+def change_password():
+    data = request.json
+    user_id = data.get("user_id")
+    new_pass = data.get("password", "").strip()
+    if not new_pass or len(new_pass) < 6:
+        return jsonify({"status": "error", "message": "Password must be at least 6 characters"}), 400
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s",
+                   (generate_password_hash(new_pass), user_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({"status": "updated"})
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED API ENDPOINTS (for dashboard)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/unified/runs")
+@login_required
+def unified_runs():
+    return jsonify({"runs": get_unified_runs()})
+
+@app.route("/api/unified/site/<site_name>")
+@login_required
+def unified_site_data(site_name):
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    site_vcenters = {
+        'b7': ['HX-VC', 'CCB7', 'UCSXD2-VC', 'UCSXD1-VC'],
+        'dr': ['MXDR', 'CCDR', 'UCSXDR-VC'],
+        'b90': ['TED'],
+        'testdev': ['HPSM', ' HUAWEI']
+    }
+    vcenter_list = site_vcenters.get(site_name.lower(), [])
+    results = get_aggregated_site_data_unified(run_id_vmware, run_id_hyperv, site_name.upper(), vcenter_list)
+    runs = get_unified_runs()
+    return jsonify({"data": results, "runs": runs, "site_name": site_name})
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED VCENTERS (VMware vCenters + Hyper-V clusters)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/vcenters")
+@login_required
+def vcenters():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT
+            vcenter_id AS id,
+            vcenter_name AS name,
+            hostname,
+            ip_address,
+            hypervisor_type AS type
+        FROM vcenters
+        UNION ALL
+        SELECT
+            hyperv_cluster_id AS id,
+            cluster_name AS name,
+            hostname,
+            ip_address,
+            cluster_type AS type
+        FROM hyperv_clusters_master
+    """)
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED CLUSTERS (full details)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/clusters")
+@login_required
+def get_clusters():
+    vcenter = request.args.get("vcenter")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+
+    filter_names = None
+    if vcenter and vcenter.strip() and vcenter.lower() != "all":
+        filter_names = [v.strip() for v in vcenter.split(",") if v.strip()]
+
+    queries = []
+    params = []
+
+    vmware_query = """
+        SELECT
+            c.cluster_name,
+            vc.vcenter_name,
+            dc.datacenter_name,
+            c.num_hosts,
+            c.num_vms,
+            c.num_cpu_cores AS total_cores,
+            c.num_cpu_threads,
+            c.total_cpu_mhz,
+            c.used_cpu_mhz,
+            c.free_cpu_mhz,
+            c.cpu_usage_percent,
+            c.total_memory_mb,
+            c.used_memory_mb,
+            c.free_memory_mb,
+            c.memory_usage_percent,
+            c.total_storage_gb,
+            c.used_storage_gb,
+            c.free_storage_gb,
+            c.storage_usage_percent,
+            c.ha_enabled,
+            c.drs_enabled,
+            'VMware' as platform
+        FROM clusters c
+        JOIN vcenters vc ON c.vcenter_id = vc.vcenter_id
+        LEFT JOIN datacenters dc ON c.vcenter_id = dc.vcenter_id AND dc.run_id = c.run_id
+        WHERE c.run_id = %s
+    """
+    queries.append(vmware_query)
+    params.append(run_id_vmware)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND vc.vcenter_name IN ({placeholders})"
+        params.extend(filter_names)
+
+    hyperv_query = """
+        SELECT
+            cluster_name,
+            cluster_name AS vcenter_name,
+            NULL AS datacenter_name,
+            num_hosts,
+            num_vms,
+            total_cpu_cores AS total_cores,
+            total_cpu_threads,
+            total_cpu_mhz,
+            used_cpu_mhz,
+            free_cpu_mhz,
+            cpu_usage_percent,
+            total_memory_mb,
+            used_memory_mb,
+            free_memory_mb,
+            memory_usage_percent,
+            total_storage_gb,
+            used_storage_gb,
+            free_storage_gb,
+            storage_usage_percent,
+            NULL AS ha_enabled,
+            NULL AS drs_enabled,
+            'Hyper-V' as platform
+        FROM hyperv_clusters
+        WHERE run_id = %s
+    """
+    queries.append(hyperv_query)
+    params.append(run_id_hyperv)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND cluster_name IN ({placeholders})"
+        params.extend(filter_names)
+
+    full_query = " UNION ALL ".join(queries) + " ORDER BY platform, cluster_name"
+    cursor.execute(full_query, params)
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/cluster/<cluster_name>")
+@login_required
+def cluster_details(cluster_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM clusters WHERE cluster_name = %s", (cluster_name,))
+    data = cursor.fetchall()
+    if not data:
+        cursor.execute("SELECT * FROM hyperv_clusters WHERE cluster_name = %s", (cluster_name,))
+        data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED HOSTS (correct column names)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/hosts")
+@login_required
+def hosts():
+    vcenter = request.args.get("vcenter")
+    cluster = request.args.get("cluster")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+
+    filter_names = None
+    if vcenter and vcenter.strip() and vcenter.lower() != "all":
+        filter_names = [v.strip() for v in vcenter.split(",") if v.strip()]
+
+    queries = []
+    params = []
+
+    vmware_query = """
+        SELECT
+            h.host_name,
+            h.ip_address,
+            h.vendor,
+            h.model,
+            h.cpu_model,
+            h.cpu_cores,
+            h.cpu_threads,
+            h.cpu_mhz,
+            h.memory_total_gb,
+            h.memory_used_gb,
+            h.power_state,
+            h.connection_state,
+            h.esxi_version,
+            h.esxi_build,
+            h.maintenance_mode,
+            h.cluster_name,
+            h.datacenter_name,
+            vc.vcenter_name,
+            (SELECT COUNT(*) FROM vm_inventory vm WHERE vm.hostname = h.host_name AND vm.run_id = h.run_id) AS num_vms,
+            'VMware' as platform
+        FROM hosts h
+        JOIN vcenters vc ON h.vcenter_id = vc.vcenter_id
+        WHERE h.run_id = %s
+    """
+    queries.append(vmware_query)
+    params.append(run_id_vmware)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND vc.vcenter_name IN ({placeholders})"
+        params.extend(filter_names)
+    if cluster:
+        queries[-1] += " AND h.cluster_name = %s"
+        params.append(cluster)
+
+    hyperv_query = """
+        SELECT
+            host_name,
+            ip_address,
+            manufacturer AS vendor,
+            model,
+            cpu_model,
+            cpu_cores,
+            cpu_threads,
+            cpu_speed_mhz AS cpu_mhz,
+            memory_total_mb / 1024 AS memory_total_gb,
+            memory_used_mb / 1024 AS memory_used_gb,
+            power_state,
+            connection_state,
+            os_version AS esxi_version,
+            NULL AS esxi_build,
+            maintenance_mode,
+            cluster_name,
+            NULL AS datacenter_name,
+            cluster_name AS vcenter_name,
+            (SELECT COUNT(*) FROM hyperv_vms hv WHERE hv.host_name = h.host_name AND hv.run_id = h.run_id) AS num_vms,
+            'Hyper-V' as platform
+        FROM hyperv_hosts h
+        WHERE run_id = %s
+    """
+    queries.append(hyperv_query)
+    params.append(run_id_hyperv)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND cluster_name IN ({placeholders})"
+        params.extend(filter_names)
+    if cluster:
+        queries[-1] += " AND cluster_name = %s"
+        params.append(cluster)
+
+    full_query = " UNION ALL ".join(queries) + " ORDER BY platform, host_name"
+    cursor.execute(full_query, params)
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/host/<host_name>")
+@login_required
+def host_details(host_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM hosts WHERE host_name = %s", (host_name,))
+    data = cursor.fetchall()
+    if not data:
+        cursor.execute("SELECT * FROM hyperv_hosts WHERE host_name = %s", (host_name,))
+        data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED VMS (full pagination, search, filter)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/vms")
+@login_required
+def get_vms():
+    vcenter = request.args.get("vcenter")
+    host = request.args.get("host")
+    cluster = request.args.get("cluster")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    q = request.args.get("q", "").strip()
+    page = max(1, int(request.args.get("page", 1)))
+    per_page = min(500, int(request.args.get("per_page", 100)))
+    vcenter_list = vcenter.split(",") if vcenter else None
+    results = get_unified_vms(run_id_vmware, run_id_hyperv, vcenter_list,
+                              host, cluster, q, page, per_page)
+    return jsonify(results)
+
+@app.route("/api/vms/export")
+@login_required
+def export_vms_csv():
+    vcenter = request.args.get("vcenter")
+    host = request.args.get("host")
+    cluster = request.args.get("cluster")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    q = request.args.get("q", "").strip()
+    vcenter_list = vcenter.split(",") if vcenter else None
+    results = get_unified_vms(run_id_vmware, run_id_hyperv, vcenter_list,
+                              host, cluster, q, page=1, per_page=1000000)
+    si = io.StringIO()
+    si.write("\ufeff")
+    writer = csv.DictWriter(si, fieldnames=[
+        "vm_name", "platform", "vcenter_name", "cpu", "ram_mb", "os",
+        "ip_address", "power_state", "host_name", "cluster_name", "total_disk_gb"
+    ])
+    writer.writeheader()
+    for row in results["data"]:
+        writer.writerow(row)
+    filename = f"unified_vms_run_vmware{run_id_vmware}_hyperv{run_id_hyperv}.csv"
+    return Response(si.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+@app.route("/api/vm/<vm_name>")
+@login_required
+def vm_details(vm_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM vm_inventory WHERE vm_name = %s", (vm_name,))
+    vm = cursor.fetchall()
+    disks = []
+    if vm:
+        cursor.execute("SELECT * FROM vm_disks WHERE vm_name = %s", (vm_name,))
+        disks = cursor.fetchall()
+    else:
+        cursor.execute("SELECT * FROM hyperv_vms WHERE vm_name = %s", (vm_name,))
+        vm = cursor.fetchall()
+        if vm:
+            cursor.execute("SELECT * FROM hyperv_vm_disks WHERE vm_id = (SELECT id FROM hyperv_vms WHERE vm_name = %s)", (vm_name,))
+            disks = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify({"vm": vm, "disks": disks})
+
+# ============================================================================
+#  FIXED UNIFIED DATASTORES (ensures numeric values)
+# ============================================================================
+@app.route("/api/datastores")
+@login_required
+def datastores():
+    vcenter = request.args.get("vcenter")
+    cluster = request.args.get("cluster")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+
+    filter_names = None
+    if vcenter and vcenter.strip() and vcenter.lower() != "all":
+        filter_names = [v.strip() for v in vcenter.split(",") if v.strip()]
+
+    queries = []
+    params = []
+
+    # VMware datastores (convert MB to GB, ensure numeric)
+    vmware_query = """
+        SELECT
+            d.datastore_name,
+            d.status,
+            d.is_accessible,
+            d.type,
+            d.num_vms,
+            COALESCE(ROUND(d.capacity_mb / 1024, 2), 0) AS capacity_gb,
+            COALESCE(ROUND(d.used_mb / 1024, 2), 0) AS used_gb,
+            COALESCE(ROUND(d.free_mb / 1024, 2), 0) AS free_gb,
+            COALESCE(ROUND(d.free_percent, 2), 0) AS free_percent,
+            COALESCE(ROUND(d.provisioned_mb / 1024, 2), 0) AS provisioned_gb,            
+            d.cluster_name,
+            vc.vcenter_name,
+            'VMware' as platform
+        FROM datastores d
+        JOIN vcenters vc ON d.vcenter_id = vc.vcenter_id
+        WHERE d.run_id = %s
+    """
+    queries.append(vmware_query)
+    params.append(run_id_vmware)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND vc.vcenter_name IN ({placeholders})"
+        params.extend(filter_names)
+    if cluster:
+        queries[-1] += " AND d.cluster_name = %s"
+        params.append(cluster)
+
+    # Hyper-V datastores
+    hyperv_query = """
+        SELECT
+            datastore_name,
+            status,
+            is_accessible,
+            type,
+            num_vms,
+            COALESCE(capacity_gb, 0) AS capacity_gb,
+            COALESCE(used_gb, 0) AS used_gb,
+            COALESCE(free_gb, 0) AS free_gb,
+            COALESCE(free_percent, 0) AS free_percent,
+            NULL AS provisioned_gb,
+            cluster_name,
+            cluster_name AS vcenter_name,
+            'Hyper-V' as platform
+        FROM hyperv_datastores
+        WHERE run_id = %s
+    """
+    queries.append(hyperv_query)
+    params.append(run_id_hyperv)
+    if filter_names:
+        placeholders = ','.join(['%s'] * len(filter_names))
+        queries[-1] += f" AND cluster_name IN ({placeholders})"
+        params.extend(filter_names)
+    if cluster:
+        queries[-1] += " AND cluster_name = %s"
+        params.append(cluster)
+
+    full_query = " UNION ALL ".join(queries) + " ORDER BY platform, datastore_name"
+    cursor.execute(full_query, params)
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+# ============================================================================
+#  FIXED UNIFIED DATASTORE VMS (works for Hyper-V)
+# ============================================================================
+@app.route("/api/datastore_vms")
+@login_required
+def datastore_vms():
+    datastore = request.args.get("datastore")
+    cluster = request.args.get("cluster")
+    run_id_vmware = request.args.get("run_id_vmware")
+    run_id_hyperv = request.args.get("run_id_hyperv")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    if run_id_vmware and run_id_vmware not in (None, "", "undefined"):
+        try:
+            vmware_run_id = int(run_id_vmware)
+        except ValueError:
+            pass
+    if run_id_hyperv and run_id_hyperv not in (None, "", "undefined"):
+        try:
+            hyperv_run_id = int(run_id_hyperv)
+        except ValueError:
+            pass
+
+    results = []
+    if not datastore:
+        cursor.close()
+        conn.close()
+        return jsonify(results)
+
+    datastore_clean = datastore.strip()
+
+    # VMware
+    if cluster and cluster not in (None, "", "undefined"):
+        cursor.execute("""
+            SELECT DISTINCT
+                vm.vm_name, vm.cpu, vm.ram_mb, vm.os,
+                vm.ip_address, vm.total_disk_gb, vc.vcenter_name,
+                'VMware' as platform
+            FROM vm_inventory vm
+            JOIN vm_disks d ON vm.id = d.vm_id AND d.run_id = vm.run_id
+            JOIN vcenters vc ON vm.vcenter_id = vc.vcenter_id
+            JOIN datastores ds ON ds.run_id = vm.run_id
+                AND TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(d.disk_path, ']', 1), '[', -1)) = ds.datastore_name
+            WHERE vm.run_id = %s
+              AND ds.datastore_name = %s
+              AND ds.cluster_name = %s
+        """, (vmware_run_id, datastore_clean, cluster))
+        results.extend(cursor.fetchall())
+    else:
+        cursor.execute("""
+            SELECT DISTINCT
+                vm.vm_name, vm.cpu, vm.ram_mb, vm.os,
+                vm.ip_address, vm.total_disk_gb, vc.vcenter_name,
+                'VMware' as platform
+            FROM vm_inventory vm
+            JOIN vm_disks d ON vm.id = d.vm_id AND d.run_id = vm.run_id
+            JOIN vcenters vc ON vm.vcenter_id = vc.vcenter_id
+            WHERE vm.run_id = %s
+              AND TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(d.disk_path, ']', 1), '[', -1)) = %s
+        """, (vmware_run_id, datastore_clean))
+        results.extend(cursor.fetchall())
+
+    # Hyper-V
+    if cluster and cluster not in (None, "", "undefined"):
+        cursor.execute("SELECT hyperv_cluster_id FROM hyperv_clusters_master WHERE cluster_name = %s", (cluster,))
+        cluster_row = cursor.fetchone()
+        if cluster_row:
+            cluster_id = cluster_row['hyperv_cluster_id']
+            cursor.execute("""
+                SELECT volume_path
+                FROM hyperv_datastores
+                WHERE run_id = %s AND hyperv_cluster_id = %s AND LOWER(datastore_name) = LOWER(%s)
+            """, (hyperv_run_id, cluster_id, datastore_clean))
+            ds_row = cursor.fetchone()
+            if ds_row:
+                volume_path = ds_row['volume_path']
+                if not volume_path.endswith('\\'):
+                    volume_path += '\\'
+                pattern = volume_path.lower() + '%'
+                cursor.execute("""
+                    SELECT DISTINCT
+                        v.vm_name, v.cpu, v.ram_mb, v.os,
+                        v.ip_address, v.total_disk_gb, v.cluster_name as vcenter_name,
+                        'Hyper-V' as platform
+                    FROM hyperv_vms v
+                    JOIN hyperv_vm_disks d ON v.id = d.vm_id AND d.run_id = v.run_id
+                    WHERE v.run_id = %s
+                      AND v.hyperv_cluster_id = %s
+                      AND LOWER(d.disk_path) LIKE %s
+                """, (hyperv_run_id, cluster_id, pattern))
+                results.extend(cursor.fetchall())
+    cursor.close()
+    conn.close()
+    return jsonify(results)
+
+# ─────────────────────────────────────────────────────────────
+#  SEARCH (simple VMware)
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/search")
+@login_required
+def search():
+    q = request.args.get("q", "")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT vm_name, ip_address
+        FROM vm_inventory
+        WHERE vm_name LIKE %s OR ip_address LIKE %s
+        LIMIT 50
+    """, (f"%{q}%", f"%{q}%"))
+    results = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(results)
+
+# ─────────────────────────────────────────────────────────────
+#  INVENTORY SCRIPT
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/run_script", methods=["POST"])
+@login_required
+@superadmin_required
+def run_script():
+    try:
+        result = subprocess.run(
+            ["ssh", "root@10.19.8.87", "python3 /root/scripts/get_inventory.py"],
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        return jsonify({
+            "status": "success",
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+# ─────────────────────────────────────────────────────────────
+#  VM BUILDER — INFRA DROPDOWNS (unchanged)
+# ─────────────────────────────────────────────────────────────
+def _latest_run(cursor, vcenter_id):
+    for table in ("clusters", "hosts", "datastores", "vm_inventory"):
+        try:
+            cursor.execute(f"SELECT MAX(run_id) AS r FROM `{table}` WHERE vcenter_id = %s", (vcenter_id,))
+            row = cursor.fetchone()
+            if row and row["r"] is not None:
+                return row["r"]
+        except Exception:
+            continue
+    return None
+
+@app.route("/api/vcenter_options")
+@login_required
+def vcenter_options():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT vcenter_id, vcenter_name, hostname, ip_address FROM vcenters ORDER BY vcenter_name")
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/infra_options/clusters")
+@login_required
+def infra_clusters():
+    vcenter_id = request.args.get("vcenter_id")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    run_id = _latest_run(cursor, vcenter_id)
+    if not run_id:
+        cursor.close()
+        conn.close()
+        return jsonify([])
+    cursor.execute("""
+        SELECT cluster_name,
+               num_hosts,
+               num_vms,
+               ROUND(free_cpu_mhz / 1000, 1) AS free_cpu_ghz,
+               ROUND(free_memory_mb / 1024, 1) AS free_ram_gb,
+               cpu_usage_percent,
+               memory_usage_percent
+        FROM clusters
+        WHERE run_id = %s AND vcenter_id = %s
+        ORDER BY cluster_name
+    """, (run_id, vcenter_id))
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/infra_options/datastores")
+@login_required
+def infra_datastores():
+    vcenter_id = request.args.get("vcenter_id")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    run_id = _latest_run(cursor, vcenter_id)
+    if not run_id:
+        cursor.close()
+        conn.close()
+        return jsonify([])
+    cursor.execute("""
+        SELECT datastore_name,
+               cluster_name,
+               type,
+               ROUND(capacity_mb / 1024, 1) AS capacity_gb,
+               ROUND(free_mb / 1024, 1) AS free_gb,
+               ROUND(used_mb / 1024, 1) AS used_gb,
+               free_percent,
+               status
+        FROM datastores
+        WHERE run_id = %s AND vcenter_id = %s AND is_accessible = 1
+        ORDER BY free_mb DESC
+    """, (run_id, vcenter_id))
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/infra_options/hosts")
+@login_required
+def infra_hosts():
+    vcenter_id = request.args.get("vcenter_id")
+    cluster_name = request.args.get("cluster")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    run_id = _latest_run(cursor, vcenter_id)
+    if not run_id:
+        cursor.close()
+        conn.close()
+        return jsonify([])
+    query = """
+        SELECT host_name, cluster_name, cpu_cores,
+               memory_total_gb, memory_used_gb,
+               ROUND(memory_total_gb - memory_used_gb, 1) AS memory_free_gb,
+               power_state, connection_state
+        FROM hosts
+        WHERE run_id = %s AND vcenter_id = %s
+          AND connection_state = 'connected' AND power_state = 'poweredOn'
+    """
+    params = [run_id, vcenter_id]
+    if cluster_name:
+        query += " AND cluster_name = %s"
+        params.append(cluster_name)
+    query += " ORDER BY host_name"
+    cursor.execute(query, params)
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/infra_options/templates")
+@login_required
+def infra_templates():
+    vcenter_id = request.args.get("vcenter_id")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    run_id = _latest_run(cursor, vcenter_id)
+    if not run_id:
+        cursor.close()
+        conn.close()
+        return jsonify([])
+    try:
+        cursor.execute(
+            "SELECT vm_name AS template_name, os, cpu AS default_cpu, ram_mb AS default_ram "
+            "FROM vm_inventory WHERE run_id = %s AND vcenter_id = %s AND is_template = 1 ORDER BY vm_name",
+            (run_id, vcenter_id)
+        )
+        data = cursor.fetchall()
+    except Exception:
+        data = []
+    if not data:
+        try:
+            cursor.execute(
+                "SELECT vm_name AS template_name, os, cpu AS default_cpu, ram_mb AS default_ram "
+                "FROM vm_inventory WHERE run_id = %s AND vcenter_id = %s "
+                "AND (LOWER(vm_name) LIKE %s OR LOWER(vm_name) LIKE %s OR LOWER(vm_name) LIKE %s "
+                "OR LOWER(vm_name) LIKE %s OR LOWER(vm_name) LIKE %s) ORDER BY vm_name",
+                (run_id, vcenter_id, '%temp%', '%tmpl%', '%golden%', '%base%', '%master%')
+            )
+            data = cursor.fetchall()
+        except Exception:
+            data = []
+    if not data:
+        cursor.execute(
+            "SELECT vm_name AS template_name, os, cpu AS default_cpu, ram_mb AS default_ram "
+            "FROM vm_inventory WHERE run_id = %s AND vcenter_id = %s ORDER BY vm_name LIMIT 200",
+            (run_id, vcenter_id)
+        )
+        data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+@app.route("/api/infra_options/networks")
+@login_required
+def infra_networks():
+    vcenter_id = request.args.get("vcenter_id")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    run_id = _latest_run(cursor, vcenter_id)
+    if not run_id:
+        cursor.close()
+        conn.close()
+        return jsonify([])
+    data = []
+    cursor.close()
+    conn.close()
+    return jsonify(data)
+
+# ─────────────────────────────────────────────────────────────
+#  VM BUILDER — PROVISION (unchanged)
+# ─────────────────────────────────────────────────────────────
+def _run_popen(cmd, log_list):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    for line in iter(proc.stdout.readline, ""):
+        log_list[0] += line
+    proc.wait()
+    return proc.returncode
+
+def run_vm_jobs(job_id, vms):
+    job = vm_jobs[job_id]
+    job["status"] = "running"
+    for idx, vm in enumerate(vms):
+        job["vms"][idx]["status"] = "running"
+        log = [""]
+        hypervisor = vm.get("hypervisor_type", "vmware").lower().strip()
+        vm_os = vm.get("vm_os_type", "linux").lower().strip()
+        job["vms"][idx]["log"] = f"[VMBuilDeR] Hypervisor: {hypervisor.upper()} | OS: {vm_os.upper()}\n\n"
+        if hypervisor == "hyperv":
+            playbook = PLAYBOOK_CREATE_VM_HYPERV
+            hv_datastore = vm.get("datastore_name") or "C:\\ClusterStorage\\Volume1"
+            hv_vm_folder = vm.get("vm_folder") or ""
+            hv_vm_os = vm.get("vm_os_type") or "linux"
+            hv_adm_pass = vm.get("vm_admin_password") or ""
+            hv_iso_path = vm.get("win_iso_path") or ""
+            cmd = [
+                "ansible-playbook", playbook,
+                "-e", f"hyperv_host={vm['vcenter_hostname']}",
+                "-e", f"hyperv_user={vm['vcenter_username']}",
+                "-e", f"hyperv_password={vm['vcenter_password']}",
+                "-e", f"vm_name={vm['vm_name']}",
+                "-e", f"vm_hostname={vm['vm_hostname']}",
+                "-e", f"datastore_name={hv_datastore}",
+                "-e", f"vm_folder={hv_vm_folder}",
+                "-e", f"template_name={vm['template_name']}",
+                "-e", f"switch_name={vm['network_name']}",
+                "-e", f"cpu={vm['cpu']}",
+                "-e", f"ram_mb={vm['ram']}",
+                "-e", f"vm_os_type={hv_vm_os}",
+                "-e", f"vm_ip={vm['vm_ip']}",
+                "-e", f"vm_netmask={vm['vm_netmask']}",
+                "-e", f"vm_gateway={vm['vm_gateway']}",
+                "-e", f"vm_dns={vm['vm_dns']}",
+                "-e", f"vm_admin_password={hv_adm_pass}",
+                "-e", f"win_iso_path={hv_iso_path}",
+            ]
+        else:
+            playbook = PLAYBOOK_CREATE_VM_VMWARE
+            cmd = [
+                "ansible-playbook", playbook,
+                "-e", f"vcenter_hostname={vm['vcenter_hostname']}",
+                "-e", f"vcenter_username={vm['vcenter_username']}",
+                "-e", f"vcenter_password={vm['vcenter_password']}",
+                "-e", f"datacenter_name={vm['datacenter_name']}",
+                "-e", f"cluster_name={vm['cluster_name']}",
+                "-e", f"template_name={vm['template_name']}",
+                "-e", f"vm_name={vm['vm_name']}",
+                "-e", f"vm_hostname={vm['vm_hostname']}",
+                "-e", f"vm_ip={vm['vm_ip']}",
+                "-e", f"vm_netmask={vm['vm_netmask']}",
+                "-e", f"vm_gateway={vm['vm_gateway']}",
+                "-e", f"vm_dns={vm['vm_dns']}",
+                "-e", f"datastore_name={vm['datastore_name']}",
+                "-e", f"vm_folder={vm.get('vm_folder', '')}",
+                "-e", f"cpu={vm['cpu']}",
+                "-e", f"ram={vm['ram']}",
+                "-e", f"disk_size={vm['disk_size']}",
+                "-e", f"disk_type={vm['disk_type']}",
+                "-e", f"network_name={vm['network_name']}",
+            ]
+        rc = _run_popen(cmd, log)
+        job["vms"][idx]["log"] += log[0]
+        if rc != 0:
+            job["vms"][idx]["status"] = "failed"
+            continue
+        user_data = vm.get("user_data", "").strip()
+        if not user_data:
+            job["vms"][idx]["status"] = "success"
+            continue
+        job["vms"][idx]["log"] += "\n─── Post-Install Script ───────────────────────\n"
+        log2 = [""]
+        if vm_os == "windows":
+            win_user = vm.get("vm_admin_user", "Administrator")
+            win_pass = vm.get("vm_admin_password", "")
+            ps_cmd = [
+                "ansible", vm["vm_ip"],
+                "-m", "win_shell",
+                "-a", user_data,
+                "-e", f"ansible_user={win_user}",
+                "-e", f"ansible_password={win_pass}",
+                "-e", "ansible_connection=winrm",
+                "-e", "ansible_winrm_transport=ntlm",
+                "-e", "ansible_winrm_server_cert_validation=ignore",
+            ]
+        else:
+            ps_cmd = [
+                "ansible", vm["vm_ip"],
+                "-u", "root",
+                "-m", "shell",
+                "-a", user_data,
+                "--ssh-extra-args", "-o StrictHostKeyChecking=no -o ConnectTimeout=30",
+            ]
+        rc2 = _run_popen(ps_cmd, log2)
+        job["vms"][idx]["log"] += log2[0]
+        if rc2 != 0:
+            job["vms"][idx]["status"] = "failed"
+            continue
+        job["vms"][idx]["status"] = "success"
+    job["status"] = "done" if all(v["status"] == "success" for v in job["vms"]) else "done_with_errors"
+
+@app.route("/api/create_vm", methods=["POST"])
+@login_required
+def api_create_vm():
+    vms = []
+    csv_file = request.files.get("csv_file")
+    if csv_file and csv_file.filename:
+        stream = io.StringIO(csv_file.stream.read().decode("utf-8"))
+        for row in csv.DictReader(stream):
+            vms.append(row)
+    else:
+        fields = [
+            "hypervisor_type", "vm_os_type",
+            "vcenter_hostname", "vcenter_username", "vcenter_password",
+            "datacenter_name", "cluster_name",
+            "template_name", "vm_name", "vm_hostname", "vm_folder",
+            "vm_ip", "vm_netmask", "vm_gateway", "vm_dns",
+            "datastore_name", "network_name",
+            "cpu", "ram", "disk_size", "disk_type",
+            "user_data",
+            "vm_admin_user", "vm_admin_password",
+            "linux_repo_url",
+            "win_iso_path",
+            "win_share_path",
+            "win_share_user",
+            "win_share_password",
+        ]
+        lists = {f: request.form.getlist(f) for f in fields}
+        for i in range(len(lists["vm_name"])):
+            vms.append({f: lists[f][i] if i < len(lists[f]) else "" for f in fields})
+    job_id = str(uuid.uuid4())
+    vm_jobs[job_id] = {
+        "status": "pending",
+        "submitted_by": session.get("username"),
+        "vms": [{"name": vm.get("vm_name", f"VM-{i+1}"), "status": "pending", "log": ""} for i, vm in enumerate(vms)],
+    }
+    threading.Thread(target=run_vm_jobs, args=(job_id, vms), daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+@app.route("/api/vm_job_status/<job_id>")
+@login_required
+def vm_job_status(job_id):
+    def generate():
+        while True:
+            job = vm_jobs.get(job_id)
+            if not job:
+                yield f"data: {json.dumps({'error': 'Job not found'})}\n\n"
+                break
+            yield f"data: {json.dumps(job)}\n\n"
+            if job["status"] in ("done", "done_with_errors"):
+                break
+            time.sleep(1.5)
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
+
+# ─────────────────────────────────────────────────────────────
+#  AI / MACHINE LEARNING FEATURES
+# ─────────────────────────────────────────────────────────────
+
+def train_cpu_forecast_model(cluster_name, historical_data):
+    """
+    historical_data: list of dicts with keys 'run_timestamp' and 'cpu_usage_percent'
+    Assumes data is sorted by time (oldest first).
+    Trains a model to predict next CPU usage based on last 3 readings.
+    """
+    if len(historical_data) < 4:
+        return None
+
+    # Create features: usage at t-3, t-2, t-1
+    df = pd.DataFrame(historical_data)
+    df = df.sort_values('run_timestamp')
+    usages = df['cpu_usage_percent'].values
+
+    X, y = [], []
+    for i in range(3, len(usages)):
+        X.append([usages[i-3], usages[i-2], usages[i-1]])
+        y.append(usages[i])
+
+    X = np.array(X)
+    y = np.array(y)
+
+    model = LinearRegression()
+    model.fit(X, y)
+
+    # Save model
+    joblib.dump(model, os.path.join(MODEL_DIR, f'{cluster_name}_cpu_model.pkl'))
+    return model
+
+def predict_next_cpu_usage(cluster_name, last_three):
+    """
+    last_three: list of last 3 CPU usage percentages.
+    Returns predicted next value.
+    """
+    model_path = os.path.join(MODEL_DIR, f'{cluster_name}_cpu_model.pkl')
+    if not os.path.exists(model_path):
+        return None
+    model = joblib.load(model_path)
+    X_pred = np.array([last_three]).reshape(1, -1)
+    return model.predict(X_pred)[0]
+
+def get_historical_cluster_data(platform='vmware', limit=20):
+    """Fetch historical CPU/memory/storage usage for clusters over last 'limit' runs."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if platform == 'vmware':
+        cursor.execute("""
+            SELECT
+                c.run_id,
+                r.run_timestamp,
+                c.cluster_name,
+                c.cpu_usage_percent,
+                c.memory_usage_percent,
+                c.storage_usage_percent,
+                c.free_cpu_mhz,
+                c.free_memory_mb,
+                c.free_storage_gb
+            FROM clusters c
+            JOIN vc_runs r ON c.run_id = r.run_id
+            ORDER BY r.run_timestamp DESC
+            LIMIT %s
+        """, (limit,))
+    else:
+        cursor.execute("""
+            SELECT
+                h.run_id,
+                r.run_timestamp,
+                h.cluster_name,
+                h.cpu_usage_percent,
+                h.memory_usage_percent,
+                h.storage_usage_percent,
+                h.free_cpu_mhz,
+                h.free_memory_mb,
+                h.free_storage_gb
+            FROM hyperv_clusters h
+            JOIN hyperv_runs r ON h.run_id = r.run_id
+            ORDER BY r.run_timestamp DESC
+            LIMIT %s
+        """, (limit,))
+    data = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return data
+
+# ---------- VM Placement Suggestions Engine ----------
+def get_vm_placement_suggestions(vm_requirements, run_id_vmware=None, run_id_hyperv=None):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+    run_id_vmware = run_id_vmware or vmware_run_id
+    run_id_hyperv = run_id_hyperv or hyperv_run_id
+
+    req_cpu_cores = vm_requirements.get('cpu_cores', 2)
+    req_ram_gb = vm_requirements.get('ram_gb', 4)
+    req_storage_gb = vm_requirements.get('storage_gb', 50)
+
+    # Get average CPU MHz per core from VMware hosts (fallback 2500)
+    cursor.execute("SELECT AVG(cpu_mhz) as avg_mhz FROM hosts WHERE run_id = %s", (vmware_run_id,))
+    row = cursor.fetchone()
+    avg_cpu_mhz = row['avg_mhz'] if row and row['avg_mhz'] else 2500
+
+    req_cpu_mhz = req_cpu_cores * avg_cpu_mhz
+    req_ram_mb = req_ram_gb * 1024
+
+    suggestions = []
+
+    # VMware clusters
+    if vm_requirements.get('platform') in ['any', 'vmware']:
+        cursor.execute("""
+            SELECT
+                c.cluster_name,
+                vc.vcenter_name,
+                c.num_hosts,
+                c.num_vms,
+                c.free_cpu_mhz,
+                c.free_memory_mb,
+                c.free_storage_gb,
+                c.cpu_usage_percent,
+                c.memory_usage_percent,
+                c.storage_usage_percent,
+                c.total_cpu_mhz,
+                c.total_memory_mb,
+                c.total_storage_gb,
+                'VMware' as platform
+            FROM clusters c
+            JOIN vcenters vc ON c.vcenter_id = vc.vcenter_id
+            WHERE c.run_id = %s
+              AND c.free_cpu_mhz >= %s
+              AND c.free_memory_mb >= %s
+              AND c.free_storage_gb >= %s
+        """, (run_id_vmware, req_cpu_mhz, req_ram_mb, req_storage_gb))
+
+        for row in cursor.fetchall():
+            cpu_remaining_ratio = (row['free_cpu_mhz'] - req_cpu_mhz) / (row['total_cpu_mhz'] or 1)
+            mem_remaining_ratio = (row['free_memory_mb'] - req_ram_mb) / (row['total_memory_mb'] or 1)
+            storage_remaining_ratio = (row['free_storage_gb'] - req_storage_gb) / (row['total_storage_gb'] or 1)
+
+            cpu_score = min(100, max(0, cpu_remaining_ratio * 100))
+            mem_score = min(100, max(0, mem_remaining_ratio * 100))
+            storage_score = min(100, max(0, storage_remaining_ratio * 100))
+
+            load_penalty = 1.0
+            if row['cpu_usage_percent'] > 70:
+                load_penalty *= 0.7
+            if row['memory_usage_percent'] > 70:
+                load_penalty *= 0.7
+            if row['storage_usage_percent'] > 70:
+                load_penalty *= 0.7
+
+            total_score = (cpu_score * 0.4 + mem_score * 0.35 + storage_score * 0.25) * load_penalty
+
+            suggestions.append({
+                'platform': 'VMware',
+                'cluster_name': row['cluster_name'],
+                'vcenter_name': row['vcenter_name'],
+                'resource_name': f"{row['cluster_name']} ({row['vcenter_name']})",
+                'total_score': round(total_score, 2),
+                'scores': {
+                    'cpu': round(cpu_score, 2),
+                    'ram': round(mem_score, 2),
+                    'storage': round(storage_score, 2)
+                },
+                'available_resources': {
+                    'free_cpu_mhz': row['free_cpu_mhz'],
+                    'free_ram_gb': round(row['free_memory_mb'] / 1024, 2),
+                    'free_storage_gb': round(row['free_storage_gb'], 2),
+                    'current_cpu_usage': round(row['cpu_usage_percent'], 2),
+                    'current_memory_usage': round(row['memory_usage_percent'], 2),
+                    'current_storage_usage': round(row['storage_usage_percent'], 2)
+                },
+                'num_hosts': row['num_hosts'],
+                'num_vms': row['num_vms']
+            })
+
+    # Hyper‑V clusters
+    if vm_requirements.get('platform') in ['any', 'hyperv']:
+        cursor.execute("""
+            SELECT
+                cluster_name,
+                num_hosts,
+                num_vms,
+                free_cpu_mhz,
+                free_memory_mb,
+                free_storage_gb,
+                cpu_usage_percent,
+                memory_usage_percent,
+                storage_usage_percent,
+                total_cpu_mhz,
+                total_memory_mb,
+                total_storage_gb,
+                'Hyper-V' as platform
+            FROM hyperv_clusters
+            WHERE run_id = %s
+              AND free_cpu_mhz >= %s
+              AND free_memory_mb >= %s
+              AND free_storage_gb >= %s
+        """, (run_id_hyperv, req_cpu_mhz, req_ram_mb, req_storage_gb))
+
+        for row in cursor.fetchall():
+            cpu_remaining_ratio = (row['free_cpu_mhz'] - req_cpu_mhz) / (row['total_cpu_mhz'] or 1)
+            mem_remaining_ratio = (row['free_memory_mb'] - req_ram_mb) / (row['total_memory_mb'] or 1)
+            storage_remaining_ratio = (row['free_storage_gb'] - req_storage_gb) / (row['total_storage_gb'] or 1)
+
+            cpu_score = min(100, max(0, cpu_remaining_ratio * 100))
+            mem_score = min(100, max(0, mem_remaining_ratio * 100))
+            storage_score = min(100, max(0, storage_remaining_ratio * 100))
+
+            load_penalty = 1.0
+            if row['cpu_usage_percent'] and row['cpu_usage_percent'] > 70:
+                load_penalty *= 0.7
+            if row['memory_usage_percent'] and row['memory_usage_percent'] > 70:
+                load_penalty *= 0.7
+            if row['storage_usage_percent'] and row['storage_usage_percent'] > 70:
+                load_penalty *= 0.7
+
+            total_score = (cpu_score * 0.4 + mem_score * 0.35 + storage_score * 0.25) * load_penalty
+
+            suggestions.append({
+                'platform': 'Hyper-V',
+                'cluster_name': row['cluster_name'],
+                'resource_name': row['cluster_name'],
+                'total_score': round(total_score, 2),
+                'scores': {
+                    'cpu': round(cpu_score, 2),
+                    'ram': round(mem_score, 2),
+                    'storage': round(storage_score, 2)
+                },
+                'available_resources': {
+                    'free_cpu_mhz': row['free_cpu_mhz'],
+                    'free_ram_gb': round(row['free_memory_mb'] / 1024, 2) if row['free_memory_mb'] else 0,
+                    'free_storage_gb': round(row['free_storage_gb'], 2) if row['free_storage_gb'] else 0,
+                    'current_cpu_usage': round(row['cpu_usage_percent'], 2) if row['cpu_usage_percent'] else 0,
+                    'current_memory_usage': round(row['memory_usage_percent'], 2) if row['memory_usage_percent'] else 0,
+                    'current_storage_usage': round(row['storage_usage_percent'], 2) if row['storage_usage_percent'] else 0
+                },
+                'num_hosts': row['num_hosts'],
+                'num_vms': row['num_vms']
+            })
+
+    cursor.close()
+    conn.close()
+    suggestions.sort(key=lambda x: x['total_score'], reverse=True)
+    return suggestions
+
+@app.route("/api/vm/suggestions", methods=["POST"])
+@login_required
+def vm_placement_suggestions():
+    try:
+        data = request.json
+        vm_requirements = {
+            'cpu_cores': int(data.get('cpu_cores', 2)),
+            'ram_gb': int(data.get('ram_gb', 4)),
+            'storage_gb': int(data.get('storage_gb', 50)),
+            'platform': data.get('platform', 'any')
+        }
+        run_id_vmware = data.get('run_id_vmware')
+        run_id_hyperv = data.get('run_id_hyperv')
+        suggestions = get_vm_placement_suggestions(vm_requirements, run_id_vmware, run_id_hyperv)
+        return jsonify({
+            'success': True,
+            'requirements': vm_requirements,
+            'suggestions': suggestions[:10],
+            'total_candidates': len(suggestions)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 400
+
+@app.route("/api/vm/suggestions/from_vm/<vm_name>")
+@login_required
+def get_suggestions_from_vm(vm_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT cpu, ram_mb, total_disk_gb, cluster_name, platform
+        FROM vm_inventory vm
+        JOIN vcenters vc ON vm.vcenter_id = vc.vcenter_id
+        WHERE vm.vm_name = %s
+    """, (vm_name,))
+    vm = cursor.fetchone()
+    if not vm:
+        cursor.execute("""
+            SELECT cpu, ram_mb, total_disk_gb, cluster_name, 'Hyper-V' as platform
+            FROM hyperv_vms
+            WHERE vm_name = %s
+        """, (vm_name,))
+        vm = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if not vm:
+        return jsonify({'success': False, 'error': 'VM not found'}), 404
+    requirements = {
+        'cpu_cores': vm['cpu'] or 2,
+        'ram_gb': int((vm['ram_mb'] or 4096) / 1024),
+        'storage_gb': int(vm['total_disk_gb'] or 50),
+        'platform': 'any'
+    }
+    suggestions = get_vm_placement_suggestions(requirements)
+    return jsonify({
+        'success': True,
+        'source_vm': vm_name,
+        'source_platform': vm.get('platform', 'Unknown'),
+        'requirements': requirements,
+        'suggestions': suggestions[:10]
+    })
+
+
+@app.route("/api/ai/train_models")
+@login_required
+@superadmin_required
+def train_models():
+    """Train forecasting models for all clusters"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    results = []
+
+    # VMware clusters
+    cursor.execute("SELECT DISTINCT cluster_name FROM clusters")
+    clusters = cursor.fetchall()
+    for cluster in clusters:
+        cluster_name = cluster['cluster_name']
+        cursor.execute("""
+            SELECT r.run_timestamp, c.cpu_usage_percent
+            FROM clusters c
+            JOIN vc_runs r ON c.run_id = r.run_id
+            WHERE c.cluster_name = %s
+            ORDER BY r.run_timestamp ASC
+            LIMIT 30
+        """, (cluster_name,))
+        hist = cursor.fetchall()
+        if len(hist) >= 4:
+            data = [{'run_timestamp': row['run_timestamp'], 'cpu_usage_percent': row['cpu_usage_percent']} for row in hist]
+            model = train_cpu_forecast_model(cluster_name, data)
+            results.append({'cluster': cluster_name, 'status': 'trained' if model else 'failed'})
+        else:
+            results.append({'cluster': cluster_name, 'status': 'insufficient data'})
+
+    # Hyper‑V clusters
+    cursor.execute("SELECT DISTINCT cluster_name FROM hyperv_clusters")
+    hyperv_clusters = cursor.fetchall()
+    for cluster in hyperv_clusters:
+        cluster_name = cluster['cluster_name']
+        cursor.execute("""
+            SELECT r.run_timestamp, h.cpu_usage_percent
+            FROM hyperv_clusters h
+            JOIN hyperv_runs r ON h.run_id = r.run_id
+            WHERE h.cluster_name = %s
+            ORDER BY r.run_timestamp ASC
+            LIMIT 30
+        """, (cluster_name,))
+        hist = cursor.fetchall()
+        if len(hist) >= 4:
+            data = [{'run_timestamp': row['run_timestamp'], 'cpu_usage_percent': row['cpu_usage_percent']} for row in hist]
+            train_cpu_forecast_model(cluster_name, data)
+            results.append({'cluster': cluster_name, 'status': 'trained'})
+        else:
+            results.append({'cluster': cluster_name, 'status': 'insufficient data'})
+
+    cursor.close()
+    conn.close()
+    return jsonify({'results': results})
+
+
+
+
+@app.route("/api/ai/predict_cpu/<cluster_name>")
+@login_required
+def predict_cpu(cluster_name):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT cpu_usage_percent
+        FROM clusters c
+        JOIN vc_runs r ON c.run_id = r.run_id
+        WHERE c.cluster_name = %s
+        ORDER BY r.run_timestamp DESC
+        LIMIT 3
+    """, (cluster_name,))
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    if len(rows) != 3:
+        return jsonify({'error': 'Not enough historical data'}), 400
+    last_three = [row['cpu_usage_percent'] for row in rows]
+    prediction = predict_next_cpu_usage(cluster_name, last_three)
+    if prediction is None:
+        return jsonify({'error': 'Model not trained yet'}), 404
+    return jsonify({
+        'cluster': cluster_name,
+        'last_three': last_three,
+        'predicted_next_cpu': round(prediction, 2),
+        'unit': '%'
+    })
+
+# ─────────────────────────────────────────────────────────────
+#  ORIGINAL SITE AGGREGATION ENDPOINTS (backward compatibility)
+# ─────────────────────────────────────────────────────────────
+def get_aggregated_site_data(run_id, site_name, vcenter_list):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if not run_id:
+        cursor.execute("SELECT MAX(run_id) as max_run FROM vc_runs")
+        run_id = cursor.fetchone()["max_run"]
+    placeholders = ','.join(['%s'] * len(vcenter_list))
+    cursor.execute(f"""
+        SELECT
+            SUM(num_vms) as total_vms,
+            SUM(total_cores) as total_cores,
+            SUM(used_cpu_mhz) as used_cpu_mhz,
+            SUM(free_cpu_mhz) as free_cpu_mhz,
+            SUM(total_cpu_vms) as total_cpu_vms,
+            SUM(total_memory_gb) as total_memory_gb,
+            SUM(used_memory_gb) as used_memory_gb,
+            SUM(free_memory_gb) as free_memory_gb,
+            SUM(total_memory_vms_gb) as total_memory_vms_gb,
+            SUM(total_storage_gb) as total_storage_gb,
+            SUM(used_storage_gb) as used_storage_gb,
+            SUM(free_storage_gb) as free_storage_gb,
+            SUM(num_clusters) as total_clusters,
+            SUM(num_hosts) as total_hosts,
+            SUM(num_datastores) as total_datastores,
+            AVG(cpu_usage_percent) as avg_cpu_usage_percent,
+            AVG(memory_usage_percent) as avg_memory_usage_percent,
+            AVG(storage_usage_percent) as avg_storage_usage_percent,
+            GROUP_CONCAT(DISTINCT Vcenter) as vcenter_list
+        FROM vcenter_summary_all_runs
+        WHERE run_id = %s AND Vcenter IN ({placeholders})
+    """, (run_id, *vcenter_list))
+    aggregated_data = cursor.fetchone()
+    cursor.execute("SELECT run_id, run_timestamp FROM vc_runs ORDER BY run_id DESC")
+    runs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    data = []
+    if aggregated_data and aggregated_data['total_vms'] is not None:
+        avg_cpu = aggregated_data['avg_cpu_usage_percent'] or 0
+        avg_memory = aggregated_data['avg_memory_usage_percent'] or 0
+        avg_storage = aggregated_data['avg_storage_usage_percent'] or 0
+        total_cpu_vms = aggregated_data['total_cpu_vms'] or 0
+        total_cores = aggregated_data['total_cores'] or 1
+        subscription_cpu_ratio = round(total_cpu_vms / total_cores, 2) if total_cores > 0 else 0
+        total_memory_vms_gb = aggregated_data['total_memory_vms_gb'] or 0
+        total_memory_gb = aggregated_data['total_memory_gb'] or 1
+        subscription_memory_ratio = round(total_memory_vms_gb / total_memory_gb, 2) if total_memory_gb > 0 else 0
+        aggregated_row = {
+            'Vcenter': f'{site_name}_Site_Aggregated',
+            'ip_vcenter': '',
+            'num_clusters': aggregated_data['total_clusters'] or 0,
+            'num_hosts': aggregated_data['total_hosts'] or 0,
+            'num_datastores': aggregated_data['total_datastores'] or 0,
+            'num_vms': aggregated_data['total_vms'] or 0,
+            'total_cores': aggregated_data['total_cores'] or 0,
+            'cpu_usage_percent': round(avg_cpu, 2),
+            'used_cores': aggregated_data['used_cpu_mhz'] or 0,
+            'free_cores': aggregated_data['free_cpu_mhz'] or 0,
+            'total_memory_gb': aggregated_data['total_memory_gb'] or 0,
+            'memory_usage_percent': round(avg_memory, 2),
+            'used_memory_gb': aggregated_data['used_memory_gb'] or 0,
+            'free_memory_gb': aggregated_data['free_memory_gb'] or 0,
+            'total_storage_gb': aggregated_data['total_storage_gb'] or 0,
+            'storage_usage_percent': round(avg_storage, 2),
+            'used_storage_gb': aggregated_data['used_storage_gb'] or 0,
+            'free_storage_gb': aggregated_data['free_storage_gb'] or 0,
+            'Subscription_cpu_ratio': subscription_cpu_ratio,
+            'total_cpu_vms': aggregated_data['total_cpu_vms'] or 0,
+            'Subscription_memory_ratio': subscription_memory_ratio,
+            'total_memory_vms_gb': aggregated_data['total_memory_vms_gb'] or 0,
+            'Subscription_storage_ratio': 0,
+            'total_disk_size_gb': 0,
+            'vcenter_list': aggregated_data['vcenter_list'] or ''
+        }
+        data.append(aggregated_row)
+    return jsonify({"run_id": run_id, "data": data, "runs": runs})
+
+@app.route("/api/site/b7")
+@login_required
+def site_b7():
+    b7_vcenters = ['HX-VC', 'CCB7', 'UCSXD2-VC', 'UCSXD1-VC']
+    run_id = request.args.get("run_id")
+    return get_aggregated_site_data(run_id, 'B7', b7_vcenters)
+
+@app.route("/api/site/dr")
+@login_required
+def site_dr():
+    dr_vcenters = ['MXDR', 'CCDR', 'UCSXDR-VC']
+    run_id = request.args.get("run_id")
+    return get_aggregated_site_data(run_id, 'DR', dr_vcenters)
+
+@app.route("/api/site/b90")
+@login_required
+def site_b90():
+    b90_vcenters = ['TED']
+    run_id = request.args.get("run_id")
+    return get_aggregated_site_data(run_id, 'B90', b90_vcenters)
+
+@app.route("/api/site/testdev")
+@login_required
+def site_testdev():
+    testdev_vcenters = ['HPSM', ' HUAWEI']
+    run_id = request.args.get("run_id")
+    return get_aggregated_site_data(run_id, 'TestDev', testdev_vcenters)
+
+@app.route("/api/dashboard")
+@login_required
+def dashboard():
+    run_id = request.args.get("run_id")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    if not run_id:
+        cursor.execute("SELECT MAX(run_id) as max_run FROM vc_runs")
+        run_id = cursor.fetchone()["max_run"]
+    cursor.execute("SELECT * FROM vcenter_summary_all_runs WHERE run_id = %s", (run_id,))
+    data = cursor.fetchall()
+    cursor.execute("SELECT run_id, run_timestamp FROM vc_runs ORDER BY run_id DESC")
+    runs = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return jsonify({"run_id": run_id, "data": data, "runs": runs})
+
+# ─────────────────────────────────────────────────────────────
+#  DEBUG ENDPOINTS
+# ─────────────────────────────────────────────────────────────
+@app.route("/api/debug/hyperv_data")
+@login_required
+@superadmin_required
+def debug_hyperv_data():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    results = {}
+    cursor.execute("SELECT * FROM hyperv_runs ORDER BY run_id DESC")
+    results['hyperv_runs'] = cursor.fetchall()
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_clusters")
+    results['hyperv_clusters_count'] = cursor.fetchone()['count']
+    if results['hyperv_clusters_count'] > 0:
+        cursor.execute("SELECT run_id, cluster_name, num_hosts, num_vms, cpu_usage_percent FROM hyperv_clusters LIMIT 10")
+        results['hyperv_clusters_sample'] = cursor.fetchall()
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_hosts")
+    results['hyperv_hosts_count'] = cursor.fetchone()['count']
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_vms")
+    results['hyperv_vms_count'] = cursor.fetchone()['count']
+    cursor.close()
+    conn.close()
+    return jsonify(results)
+
+@app.route("/api/debug/schema")
+@login_required
+@superadmin_required
+def debug_schema():
+    table = request.args.get("table", "vm_inventory")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(f"DESCRIBE `{table}`")
+        cols = cursor.fetchall()
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        return jsonify({"error": str(e)})
+    cursor.close()
+    conn.close()
+    return jsonify({"table": table, "columns": cols})
+
+@app.route("/api/debug/sample")
+@login_required
+@superadmin_required
+def debug_sample():
+    table = request.args.get("table", "vm_inventory")
+    run_id = request.args.get("run_id")
+    limit = int(request.args.get("limit", 3))
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        if run_id:
+            cursor.execute(f"SELECT * FROM `{table}` WHERE run_id=%s LIMIT %s", (run_id, limit))
+        else:
+            cursor.execute(f"SELECT * FROM `{table}` LIMIT %s", (limit,))
+        rows = cursor.fetchall()
+    except Exception as e:
+        cursor.close()
+        conn.close()
+        return jsonify({"error": str(e)})
+    cursor.close()
+    conn.close()
+    return jsonify(rows)
+
+
+# ─────────────────────────────────────────────────────────────
+#  AI CHAT — helpers  (no extra top-level imports needed)
+# ─────────────────────────────────────────────────────────────
+
+
+#backend = '''# ─────────────────────────────────────────────────────────────
+#  INFRA ASSISTANT — FINAL BACKEND v4
+#  Instructions:
+#  1. In app.py, find the EXISTING @app.route("/api/ai/train_models") 
+#     and delete it plus its function body.
+#  2. Find the EXISTING @app.route("/api/ai/ask") and delete it plus 
+#     its function body.
+#  3. Find the EXISTING @app.route("/ai_chat") and delete it.
+#  4. Paste THIS entire file at that location (before if __name__).
+# ─────────────────────────────────────────────────────────────
+
+AGENT_NAME = "Infra Assistant"
+AGENT_DESC = (
+    "I am Infra Assistant — an AI built for VMware and Hyper-V infrastructure. "
+    "I answer questions about clusters, VMs, hosts, datastores, resource usage, "
+    "trends, historical reports, capacity planning, and VM placement suggestions."
+)
+
+# ── safe numeric conversion (fixes Decimal * float TypeError) ─
+
+def _f(val, div=1, dec=1):
+    """Convert any DB value (Decimal/int/float/None) → plain Python float."""
+    try:
+        return round(float(val) / float(div), dec) if val is not None else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+def _favg(lst, key):
+    vals = [float(x[key]) for x in lst if x.get(key) is not None]
+    return round(sum(vals) / len(vals), 1) if vals else 0.0
+
+def _kw(text, *kws):
+    return any(k in text for k in kws)
+
+# ── cluster / datastore dict builders ─────────────────────────
+
+def _mk_cluster(row, platform, vcenter=None):
+    return {
+        "name":             row["cluster_name"],
+        "platform":         platform,
+        "vcenter":          vcenter or row["cluster_name"],
+        "free_cpu_ghz":     _f(row.get("free_cpu_mhz"),  1000),
+        "free_ram_gb":      _f(row.get("free_memory_mb"), 1024),
+        "free_storage_tb":  _f(row.get("free_storage_gb"), 1024),
+        "total_cpu_ghz":    _f(row.get("total_cpu_mhz"),  1000),
+        "total_ram_gb":     _f(row.get("total_memory_mb"), 1024),
+        "total_storage_gb": _f(row.get("total_storage_gb")),
+        "cpu_usage":        _f(row.get("cpu_usage_percent")),
+        "mem_usage":        _f(row.get("memory_usage_percent")),
+        "storage_usage":    _f(row.get("storage_usage_percent")),
+        "num_vms":          int(row.get("num_vms") or 0),
+        "num_hosts":        int(row.get("num_hosts") or 0),
+    }
+
+def _mk_ds(row, platform):
+    fp = _f(row.get("free_percent"))
+    return {
+        "name":         row["datastore_name"],
+        "cluster":      row["cluster_name"],
+        "platform":     platform,
+        "free_gb":      _f(row.get("free_gb")),
+        "used_gb":      _f(row.get("used_gb")),
+        "capacity_gb":  _f(row.get("capacity_gb")),
+        "free_percent": fp,
+        "used_percent": round(100.0 - fp, 1),
+    }
+
+# ── LLM caller ─────────────────────────────────────────────────
+
+def _llm(prompt, model="phi3-local:latest"):
+    """Try phi3 variants, then tinyllama. Always returns a string."""
+    for m in (model, "phi3:latest", "phi3-mini:latest", "tinyllama:latest"):
+        try:
+            r = requests.post(
+                "http://localhost:11434/api/generate",
+                json={"model": m, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.1, "num_ctx": 3072, "num_predict": 350}},
+                timeout=90,
+            )
+            if r.status_code == 200:
+                raw = r.json().get("response", "").strip()
+                for mk in ("### Answer", "Answer:", "### Question", "Question:"):
+                    if mk in raw:
+                        raw = raw.split(mk)[-1].strip()
+                if raw:
+                    return raw
+        except Exception:
+            continue
+    return None   # caller handles None
+
+# ── TRAIN MODELS (replaces old route) ─────────────────────────
+
+def ai_train_models():
+    conn = get_db_connection(); cursor = conn.cursor()
+    results = []
+
+    def _train(key, rows):
+        hist = [{"run_timestamp": r["run_timestamp"],
+                 "cpu_usage_percent": float(r["pct"] or 0)}
+                for r in rows if r.get("pct") is not None]
+        if len(hist) >= 4:
+            m = train_cpu_forecast_model(key, hist)
+            return "trained" if m else "failed"
+        return "insufficient data"
+
+    # VMware clusters
+    cursor.execute("SELECT DISTINCT cluster_name FROM clusters")
+    for row in cursor.fetchall():
+        cn = row["cluster_name"]
+        cursor.execute("""
+            SELECT r.run_timestamp, c.cpu_usage_percent AS pct
+            FROM clusters c JOIN vc_runs r ON c.run_id=r.run_id
+            WHERE c.cluster_name=%s ORDER BY r.run_timestamp ASC LIMIT 60
+        """, (cn,))
+        results.append({"entity": f"[VMware Cluster] {cn}",
+                        "status": _train(cn, cursor.fetchall())})
+
+    # Hyper-V clusters
+    cursor.execute("SELECT DISTINCT cluster_name FROM hyperv_clusters")
+    for row in cursor.fetchall():
+        cn = row["cluster_name"]
+        cursor.execute("""
+            SELECT r.run_timestamp, h.cpu_usage_percent AS pct
+            FROM hyperv_clusters h JOIN hyperv_runs r ON h.run_id=r.run_id
+            WHERE h.cluster_name=%s ORDER BY r.run_timestamp ASC LIMIT 60
+        """, (cn,))
+        results.append({"entity": f"[Hyper-V Cluster] {cn}",
+                        "status": _train(cn, cursor.fetchall())})
+
+    # VMware Hosts (memory % as proxy)
+    cursor.execute("""
+        SELECT DISTINCT host_name FROM hosts
+        WHERE run_id=(SELECT MAX(run_id) FROM vc_runs)
+    """)
+    for row in cursor.fetchall():
+        hn = row["host_name"]
+        cursor.execute("""
+            SELECT r.run_timestamp,
+                   CASE WHEN memory_total_gb>0
+                        THEN ROUND(memory_used_gb/memory_total_gb*100,2)
+                        ELSE 0 END AS pct
+            FROM hosts h JOIN vc_runs r ON h.run_id=r.run_id
+            WHERE h.host_name=%s ORDER BY r.run_timestamp ASC LIMIT 60
+        """, (hn,))
+        results.append({"entity": f"[Host] {hn}",
+                        "status": _train("host__"+hn, cursor.fetchall())})
+
+    # VMware Datastores (used % trend)
+    cursor.execute("""
+        SELECT DISTINCT datastore_name FROM datastores
+        WHERE run_id=(SELECT MAX(run_id) FROM vc_runs)
+    """)
+    for row in cursor.fetchall():
+        dn = row["datastore_name"]
+        cursor.execute("""
+            SELECT r.run_timestamp,
+                   CASE WHEN capacity_mb>0
+                        THEN ROUND(used_mb/capacity_mb*100,2)
+                        ELSE 0 END AS pct
+            FROM datastores d JOIN vc_runs r ON d.run_id=r.run_id
+            WHERE d.datastore_name=%s ORDER BY r.run_timestamp ASC LIMIT 60
+        """, (dn,))
+        results.append({"entity": f"[Datastore] {dn}",
+                        "status": _train("ds__"+dn, cursor.fetchall())})
+
+    cursor.close(); conn.close()
+    trained = sum(1 for r in results if r["status"] == "trained")
+    return jsonify({"results": results, "trained": trained, "total": len(results)})
+
+# ── MAIN AI ROUTE ──────────────────────────────────────────────
+
+@app.route("/api/ai/ask", methods=["POST"])
+@login_required
+def ai_ask():
+    import re, traceback
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    req_data = request.json or {}
+    question = req_data.get("question", "").strip()
+    if not question:
+        return jsonify({"error": "No question provided"}), 400
+    q = question.lower()
+
+    # ── Identity (no DB) ──────────────────────────────────────
+    if _kw(q, "what is your name", "who are you", "your name", "what are you called",
+              "what can you do", "help me", "how can you help",
+              "introduce yourself", "hello", "hi ", "hey ",
+              "good morning", "good afternoon", "good evening"):
+        return jsonify({"question": question, "answer": (
+            f"👋 Hello! I'm **{AGENT_NAME}**.\n\n{AGENT_DESC}\n\n"
+            "**What I can do:**\n"
+            "  • VM / cluster / host / datastore counts and details\n"
+            "  • CPU, RAM, storage usage — current and trends\n"
+            "  • Historical reports (last month / 3 months / last year)\n"
+            "  • Capacity recommendations based on history\n"
+            "  • VM placement suggestions (best cluster for your needs)\n"
+            "  • Full, CPU, memory, datastore, host reports (downloadable CSV)\n"
+            "  • Compare VMware vs Hyper-V\n"
+            "  • Predict next CPU usage (after ML training)\n\n"
+            "Just type your question!"
+        )})
+
+    try:
+        # ── 1. Fetch current-state data ────────────────────────
+        conn = get_db_connection(); cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT c.cluster_name, vc.vcenter_name,
+                   c.free_cpu_mhz, c.free_memory_mb, c.free_storage_gb,
+                   c.cpu_usage_percent, c.memory_usage_percent, c.storage_usage_percent,
+                   c.total_cpu_mhz, c.total_memory_mb, c.total_storage_gb,
+                   c.num_vms, c.num_hosts
+            FROM clusters c JOIN vcenters vc ON c.vcenter_id=vc.vcenter_id
+            WHERE c.run_id=(SELECT MAX(run_id) FROM vc_runs)
+        """)
+        vmw_raw = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT cluster_name,
+                   free_cpu_mhz, free_memory_mb, free_storage_gb,
+                   cpu_usage_percent, memory_usage_percent, storage_usage_percent,
+                   total_cpu_mhz, total_memory_mb, total_storage_gb,
+                   num_vms, num_hosts
+            FROM hyperv_clusters
+            WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+        """)
+        hv_raw = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT datastore_name, cluster_name,
+                   free_mb/1024.0 AS free_gb, used_mb/1024.0 AS used_gb,
+                   capacity_mb/1024.0 AS capacity_gb, free_percent
+            FROM datastores WHERE run_id=(SELECT MAX(run_id) FROM vc_runs)
+        """)
+        vmw_ds_raw = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT datastore_name, cluster_name,
+                   free_gb, used_gb, capacity_gb, free_percent
+            FROM hyperv_datastores WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+        """)
+        hv_ds_raw = cursor.fetchall()
+
+        cursor.execute("SELECT COUNT(*) AS t FROM vm_inventory WHERE run_id=(SELECT MAX(run_id) FROM vc_runs)")
+        vmware_vms = int(cursor.fetchone()["t"] or 0)
+
+        cursor.execute("SELECT COUNT(*) AS t FROM hyperv_vms WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)")
+        hyperv_vms = int(cursor.fetchone()["t"] or 0)
+
+        cursor.execute("""
+            SELECT vc.vcenter_name, COUNT(*) AS c
+            FROM vm_inventory vm JOIN vcenters vc ON vm.vcenter_id=vc.vcenter_id
+            WHERE vm.run_id=(SELECT MAX(run_id) FROM vc_runs)
+            GROUP BY vc.vcenter_name ORDER BY c DESC
+        """)
+        vcenter_vms = {r["vcenter_name"]: int(r["c"]) for r in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT vc.vcenter_name, COUNT(*) AS c
+            FROM clusters cl JOIN vcenters vc ON cl.vcenter_id=vc.vcenter_id
+            WHERE cl.run_id=(SELECT MAX(run_id) FROM vc_runs)
+            GROUP BY vc.vcenter_name
+        """)
+        vcenter_clusters = {r["vcenter_name"]: int(r["c"]) for r in cursor.fetchall()}
+
+        cursor.execute("""
+            SELECT h.host_name, h.cluster_name, vc.vcenter_name,
+                   h.cpu_cores, h.memory_total_gb, h.memory_used_gb,
+                   h.power_state, h.connection_state, h.model, h.vendor,
+                   h.cpu_model, h.cpu_mhz, h.esxi_version,
+                   (SELECT COUNT(*) FROM vm_inventory vm
+                    WHERE vm.hostname=h.host_name AND vm.run_id=h.run_id) AS num_vms,
+                   'VMware' AS platform
+            FROM hosts h JOIN vcenters vc ON h.vcenter_id=vc.vcenter_id
+            WHERE h.run_id=(SELECT MAX(run_id) FROM vc_runs)
+        """)
+        vmware_hosts = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT host_name, cluster_name, cluster_name AS vcenter_name,
+                   cpu_cores,
+                   ROUND(memory_total_mb/1024.0,2) AS memory_total_gb,
+                   ROUND(memory_used_mb/1024.0,2)  AS memory_used_gb,
+                   power_state, connection_state, model,
+                   manufacturer AS vendor, cpu_model,
+                   cpu_speed_mhz AS cpu_mhz, os_version AS esxi_version,
+                   (SELECT COUNT(*) FROM hyperv_vms hv
+                    WHERE hv.host_name=h.host_name AND hv.run_id=h.run_id) AS num_vms,
+                   'Hyper-V' AS platform
+            FROM hyperv_hosts h WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+        """)
+        hyperv_hosts = cursor.fetchall()
+
+        cursor.execute("""
+            SELECT c.cluster_name, c.cpu_usage_percent
+            FROM clusters c JOIN vc_runs vr ON c.run_id=vr.run_id
+            ORDER BY c.cluster_name, vr.run_timestamp DESC LIMIT 500
+        """)
+        cpu_hist_raw = cursor.fetchall()
+
+        cursor.close(); conn.close()
+
+        # ── 2. Build unified lists (all floats — no Decimal) ───
+        all_clusters = (
+            [_mk_cluster(r, "VMware", r["vcenter_name"]) for r in vmw_raw]
+          + [_mk_cluster(r, "Hyper-V") for r in hv_raw]
+        )
+        all_ds = (
+            [_mk_ds(r, "VMware")  for r in vmw_ds_raw]
+          + [_mk_ds(r, "Hyper-V") for r in hv_ds_raw]
+        )
+        all_hosts  = list(vmware_hosts) + list(hyperv_hosts)
+        vmw_cls    = [c for c in all_clusters if c["platform"] == "VMware"]
+        hv_cls     = [c for c in all_clusters if c["platform"] == "Hyper-V"]
+        total_vms  = vmware_vms + hyperv_vms
+        n_clusters = len(all_clusters)
+        n_ds       = len(all_ds)
+        n_hosts    = len(all_hosts)
+
+        # ── 3. ML predictions ──────────────────────────────────
+        ch = defaultdict(list)
+        for row in cpu_hist_raw:
+            ch[row["cluster_name"]].append(float(row["cpu_usage_percent"] or 0))
+        ml_pred = {}
+        try:
+            for cname, readings in ch.items():
+                last3 = readings[:3]
+                if len(last3) == 3:
+                    pred = predict_next_cpu_usage(cname, list(reversed(last3)))
+                    if pred is not None:
+                        ml_pred[cname] = round(float(pred), 1)
+        except Exception:
+            pass
+
+        # ── 4. Table helper ────────────────────────────────────
+        def _tbl(title, cols, rows):
+            return {"type": "table", "title": title, "columns": cols, "rows": list(rows)}
+
+        # Column definitions
+        CLS_COLS = [
+            {"key":"name","label":"Cluster"},{"key":"platform","label":"Platform"},
+            {"key":"vcenter","label":"vCenter"},{"key":"num_hosts","label":"Hosts"},
+            {"key":"num_vms","label":"VMs"},
+            {"key":"cpu_usage","label":"CPU %","type":"bar"},
+            {"key":"free_cpu_ghz","label":"Free CPU GHz"},
+            {"key":"mem_usage","label":"RAM %","type":"bar"},
+            {"key":"free_ram_gb","label":"Free RAM GB"},
+            {"key":"storage_usage","label":"Stor %","type":"bar"},
+            {"key":"free_storage_tb","label":"Free Stor TB"},
+        ]
+        DS_COLS = [
+            {"key":"name","label":"Datastore"},{"key":"platform","label":"Platform"},
+            {"key":"cluster","label":"Cluster"},{"key":"capacity_gb","label":"Cap GB"},
+            {"key":"used_gb","label":"Used GB"},{"key":"free_gb","label":"Free GB"},
+            {"key":"free_percent","label":"Free %","type":"bar"},
+            {"key":"used_percent","label":"Used %","type":"badge"},
+        ]
+        HOST_COLS = [
+            {"key":"host_name","label":"Host"},{"key":"platform","label":"Platform"},
+            {"key":"vcenter_name","label":"vCenter/Cluster"},
+            {"key":"cluster_name","label":"Cluster"},
+            {"key":"cpu_cores","label":"CPU Cores"},
+            {"key":"memory_total_gb","label":"RAM Total GB"},
+            {"key":"memory_used_gb","label":"RAM Used GB"},
+            {"key":"num_vms","label":"VMs"},
+            {"key":"power_state","label":"Power","type":"status"},
+            {"key":"esxi_version","label":"Version"},
+            {"key":"model","label":"Model"},
+        ]
+
+        # ── 5. Report builders ─────────────────────────────────
+        def rep_clusters():
+            return _tbl("Cluster Report", CLS_COLS,
+                        sorted(all_clusters, key=lambda x: -x["cpu_usage"]))
+
+        def rep_hosts():
+            return _tbl("Hosts Report", HOST_COLS,
+                        sorted(all_hosts, key=lambda x: (x.get("platform",""),
+                                                          x.get("host_name",""))))
+
+        def rep_ds():
+            return _tbl("Datastore Report", DS_COLS,
+                        sorted(all_ds, key=lambda x: x["free_percent"]))
+
+        def rep_vms_per_cluster():
+            cols = [{"key":"name","label":"Cluster"},{"key":"platform","label":"Platform"},
+                    {"key":"vcenter","label":"vCenter"},
+                    {"key":"num_vms","label":"VMs"},{"key":"num_hosts","label":"Hosts"}]
+            return _tbl("VMs per Cluster", cols,
+                        sorted(all_clusters, key=lambda x: -x["num_vms"]))
+
+        def rep_cpu():
+            cols = CLS_COLS[:7] + [{"key":"predicted","label":"Predicted %"}]
+            rows = [dict(c, predicted=ml_pred.get(c["name"],"–"))
+                    for c in sorted(all_clusters, key=lambda x: -x["cpu_usage"])]
+            return _tbl("CPU Report", cols, rows)
+
+        def rep_memory():
+            cols = [{"key":"name","label":"Cluster"},{"key":"platform","label":"Platform"},
+                    {"key":"vcenter","label":"vCenter"},
+                    {"key":"mem_usage","label":"RAM %","type":"bar"},
+                    {"key":"free_ram_gb","label":"Free RAM GB"},
+                    {"key":"total_ram_gb","label":"Total RAM GB"}]
+            return _tbl("Memory Report", cols,
+                        sorted(all_clusters, key=lambda x: -x["mem_usage"]))
+
+        def rep_full():
+            high_cpu = [c for c in all_clusters if c["cpu_usage"] > 80]
+            crit_ds  = [d for d in all_ds if d["free_percent"] < 10]
+            summary = [
+                {"label":"Total VMs",    "value":total_vms,  "status":"ok"},
+                {"label":"VMware VMs",   "value":vmware_vms, "status":"ok"},
+                {"label":"Hyper-V VMs",  "value":hyperv_vms, "status":"ok"},
+                {"label":"Clusters",     "value":n_clusters, "status":"ok"},
+                {"label":"Hosts",        "value":n_hosts,    "status":"ok"},
+                {"label":"Datastores",   "value":n_ds,       "status":"ok"},
+                {"label":">80% CPU",     "value":len(high_cpu),
+                 "status":"crit" if high_cpu else "ok"},
+                {"label":"DS <10% free", "value":len(crit_ds),
+                 "status":"crit" if crit_ds else "ok"},
+            ]
+            note_parts = []
+            if high_cpu: note_parts.append("⚠ High CPU: "+", ".join(c["name"] for c in high_cpu))
+            if crit_ds:  note_parts.append("🔴 Critical DS: "+", ".join(d["name"] for d in crit_ds))
+            return {
+                "type":"full", "title":"Full Infrastructure Report",
+                "summary": summary,
+                "note": "  ".join(note_parts) or "✓ All systems healthy.",
+                "sections":[
+                    {**rep_clusters(), "title":"Clusters"},
+                    {**rep_ds(),       "title":"Datastores"},
+                    {**rep_hosts(),    "title":"Hosts"},
+                ],
+            }
+
+        # ── 6. Historical helpers ──────────────────────────────
+        def _ago(months):
+            return (datetime.now() - timedelta(days=months*30)).strftime("%Y-%m-%d %H:%M:%S")
+
+        def hist_vms(months, label):
+            c2 = get_db_connection().cursor()
+            c2.connection.ping(reconnect=True)
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            thr = _ago(months)
+            c2.execute("""
+                SELECT vm.vm_name, vm.cpu, vm.ram_mb, vm.os,
+                       vm.ip_address, vm.power_state,
+                       vm.hostname AS host_name,
+                       vc.vcenter_name, vm.total_disk_gb,
+                       r.run_timestamp, 'VMware' AS platform
+                FROM vm_inventory vm
+                JOIN vcenters vc ON vm.vcenter_id=vc.vcenter_id
+                JOIN vc_runs r ON vm.run_id=r.run_id
+                WHERE vm.run_id=(
+                    SELECT MIN(v2.run_id) FROM vm_inventory v2
+                    WHERE v2.vm_name=vm.vm_name
+                ) AND r.run_timestamp >= %s
+                ORDER BY r.run_timestamp DESC LIMIT 500
+            """, (thr,))
+            vmw = c2.fetchall()
+            c2.execute("""
+                SELECT hv.vm_name, hv.cpu, hv.ram_mb, hv.os,
+                       hv.ip_address, hv.power_state,
+                       hv.host_name, hv.cluster_name AS vcenter_name,
+                       hv.total_disk_gb, r.run_timestamp, 'Hyper-V' AS platform
+                FROM hyperv_vms hv
+                JOIN hyperv_runs r ON hv.run_id=r.run_id
+                WHERE hv.run_id=(
+                    SELECT MIN(h2.run_id) FROM hyperv_vms h2
+                    WHERE h2.vm_name=hv.vm_name
+                ) AND r.run_timestamp >= %s
+                ORDER BY r.run_timestamp DESC LIMIT 500
+            """, (thr,))
+            hv = c2.fetchall()
+            c2.close(); conn2.close()
+            rows = []
+            for r in list(vmw)+list(hv):
+                row = {k: (float(v) if hasattr(v,"__float__") and not isinstance(v,(int,bool)) else v)
+                       for k,v in r.items()}
+                row["ram_gb"] = round(float(r.get("ram_mb") or 0)/1024, 1)
+                row["run_timestamp"] = str(r.get("run_timestamp",""))[:16]
+                rows.append(row)
+            cols = [
+                {"key":"vm_name","label":"VM Name"},
+                {"key":"platform","label":"Platform"},
+                {"key":"vcenter_name","label":"vCenter/Cluster"},
+                {"key":"cpu","label":"vCPU"},{"key":"ram_gb","label":"RAM GB"},
+                {"key":"os","label":"OS"},{"key":"ip_address","label":"IP"},
+                {"key":"power_state","label":"Power","type":"status"},
+                {"key":"total_disk_gb","label":"Disk GB"},
+                {"key":"run_timestamp","label":"First Seen"},
+            ]
+            return _tbl(f"VMs first seen in last {label} ({len(rows)} found)", cols, rows)
+
+        def hist_ds(months, label):
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            thr = _ago(months)
+            c2.execute("""
+                SELECT d.datastore_name, d.cluster_name, vc.vcenter_name,
+                       ROUND(d.capacity_mb/1024,1) AS capacity_gb,
+                       ROUND(d.used_mb/1024,1)     AS used_gb,
+                       ROUND(d.free_mb/1024,1)      AS free_gb,
+                       d.free_percent, r.run_timestamp, 'VMware' AS platform
+                FROM datastores d
+                JOIN vcenters vc ON d.vcenter_id=vc.vcenter_id
+                JOIN vc_runs r ON d.run_id=r.run_id
+                WHERE d.run_id=(
+                    SELECT MIN(d2.run_id) FROM datastores d2
+                    WHERE d2.datastore_name=d.datastore_name
+                ) AND r.run_timestamp >= %s
+                ORDER BY r.run_timestamp DESC LIMIT 200
+            """, (thr,))
+            rows = c2.fetchall()
+            c2.close(); conn2.close()
+            cols = [
+                {"key":"datastore_name","label":"Datastore"},
+                {"key":"cluster_name","label":"Cluster"},
+                {"key":"vcenter_name","label":"vCenter"},
+                {"key":"capacity_gb","label":"Cap GB"},
+                {"key":"used_gb","label":"Used GB"},
+                {"key":"free_gb","label":"Free GB"},
+                {"key":"free_percent","label":"Free %","type":"bar"},
+                {"key":"run_timestamp","label":"First Seen"},
+            ]
+            clean = [{**{k:str(v)[:16] if k=="run_timestamp" else v for k,v in r.items()}} for r in rows]
+            return _tbl(f"Datastores first seen in last {label} ({len(clean)} found)", cols, clean)
+
+        def trend_report(metric, n_runs=5):
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            c2.execute("""
+                SELECT run_id, run_timestamp FROM vc_runs
+                ORDER BY run_id DESC LIMIT %s
+            """, (n_runs,))
+            runs = list(reversed(c2.fetchall()))
+            col_map = {"cpu":"cpu_usage_percent","memory":"memory_usage_percent",
+                       "ram":"memory_usage_percent","storage":"storage_usage_percent"}
+            db_col = col_map.get(metric, "cpu_usage_percent")
+            pivot = {}
+            for run in runs:
+                c2.execute(f"""
+                    SELECT c.cluster_name, c.{db_col} AS val, vc.vcenter_name
+                    FROM clusters c JOIN vcenters vc ON c.vcenter_id=vc.vcenter_id
+                    WHERE c.run_id=%s
+                """, (run["run_id"],))
+                for r in c2.fetchall():
+                    cn = r["cluster_name"]
+                    if cn not in pivot:
+                        pivot[cn] = {"name":cn, "vcenter":r["vcenter_name"]}
+                    ts = str(run["run_timestamp"])[:16]
+                    pivot[cn][ts] = round(float(r["val"] or 0), 1)
+            c2.close(); conn2.close()
+            ts_labels = [str(r["run_timestamp"])[:16] for r in runs]
+            cols = ([{"key":"name","label":"Cluster"},{"key":"vcenter","label":"vCenter"}]
+                  + [{"key":ts,"label":ts} for ts in ts_labels])
+            return _tbl(f"{metric.upper()} Trend — last {n_runs} runs",
+                        cols, list(pivot.values()))
+
+        def recommendations():
+            recs = []
+            for d in sorted([x for x in all_ds if x["free_percent"]<15],
+                            key=lambda x: x["free_percent"])[:5]:
+                recs.append({"priority":"🔴 Critical","area":"Datastore",
+                             "resource":d["name"],
+                             "issue":f"{d['free_percent']}% free ({d['free_gb']} GB / {d['capacity_gb']} GB)",
+                             "action":"Expand or migrate VMs immediately"})
+            for c in sorted([x for x in all_clusters if x["cpu_usage"]>75],
+                            key=lambda x: -x["cpu_usage"])[:5]:
+                pred = f" | pred: {ml_pred[c['name']]}%" if c["name"] in ml_pred else ""
+                recs.append({"priority":"🟡 Warning","area":"Cluster CPU",
+                             "resource":c["name"],
+                             "issue":f"{c['cpu_usage']}% used{pred}",
+                             "action":"Migrate VMs to idle cluster or add hosts"})
+            for c in sorted([x for x in all_clusters if x["mem_usage"]>75],
+                            key=lambda x: -x["mem_usage"])[:5]:
+                recs.append({"priority":"🟡 Warning","area":"Cluster RAM",
+                             "resource":c["name"],
+                             "issue":f"{c['mem_usage']}% used ({c['free_ram_gb']} GB free)",
+                             "action":"Migrate memory-heavy VMs or add RAM"})
+            for c in [x for x in all_clusters if x["cpu_usage"]<20 and x["mem_usage"]<30][:3]:
+                recs.append({"priority":"🔵 Info","area":"Underutilised",
+                             "resource":c["name"],
+                             "issue":f"CPU {c['cpu_usage']}%  RAM {c['mem_usage']}%  VMs:{c['num_vms']}",
+                             "action":"Consolidate workloads here or decommission"})
+            if not recs:
+                recs.append({"priority":"✅ Healthy","area":"All","resource":"Infrastructure",
+                             "issue":"No critical issues","action":"Continue monitoring"})
+            cols = [{"key":"priority","label":"Priority"},{"key":"area","label":"Area"},
+                    {"key":"resource","label":"Resource"},{"key":"issue","label":"Issue"},
+                    {"key":"action","label":"Recommended Action"}]
+            return _tbl("Capacity Recommendations", cols, recs)
+
+        # ── 7. Entity detail lookups ───────────────────────────
+        def vm_detail(frag):
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            c2.execute("""
+                SELECT vm.id, vm.vm_name, vm.cpu, vm.ram_mb, vm.os,
+                       vm.ip_address, vm.all_ips, vm.hostname,
+                       vm.power_state, vm.tools_version,
+                       vm.total_disk_gb, vm.is_template,
+                       vm.nic_count, vm.disk_count,
+                       vc.vcenter_name, 'VMware' AS platform,
+                       NULL AS cluster_name
+                FROM vm_inventory vm JOIN vcenters vc ON vm.vcenter_id=vc.vcenter_id
+                WHERE vm.run_id=(SELECT MAX(run_id) FROM vc_runs)
+                  AND LOWER(vm.vm_name) LIKE %s LIMIT 1
+            """, (f"%{frag}%",))
+            vm = c2.fetchone(); plat = "VMware"
+            if not vm:
+                c2.execute("""
+                    SELECT id, vm_name, cpu, ram_mb, os, ip_address,
+                           NULL AS all_ips, host_name AS hostname,
+                           power_state, NULL AS tools_version,
+                           total_disk_gb, 0 AS is_template,
+                           NULL AS nic_count, NULL AS disk_count,
+                           cluster_name AS vcenter_name, 'Hyper-V' AS platform,
+                           cluster_name
+                    FROM hyperv_vms
+                    WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+                      AND LOWER(vm_name) LIKE %s LIMIT 1
+                """, (f"%{frag}%",)); vm = c2.fetchone(); plat = "Hyper-V"
+            if not vm:
+                c2.close(); conn2.close(); return None
+            disks = []
+            if plat == "VMware":
+                # vm_disks uses disk_size_gb (not size_mb)
+                c2.execute("""
+                    SELECT disk_path, ROUND(disk_size_gb,2) AS size_gb, NULL AS disk_type
+                    FROM vm_disks WHERE vm_id=%s
+                """, (vm.get("id"),))
+                disks = c2.fetchall()
+            else:
+                c2.execute("""
+                    SELECT disk_path, ROUND(disk_size_gb,2) AS size_gb, disk_type
+                    FROM hyperv_vm_disks WHERE vm_id=%s
+                """, (vm.get("id"),))
+                disks = c2.fetchall()
+            c2.close(); conn2.close()
+            clean = {k:(float(v) if hasattr(v,"__float__") and not isinstance(v,(int,bool)) else v)
+                     for k,v in vm.items()}
+            return {"type":"vm_detail","vm":clean,"disks":list(disks)}
+
+        def host_detail(frag):
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            c2.execute("""
+                SELECT h.*, vc.vcenter_name, 'VMware' AS platform,
+                       (SELECT COUNT(*) FROM vm_inventory vm
+                        WHERE vm.hostname=h.host_name AND vm.run_id=h.run_id) AS num_vms
+                FROM hosts h JOIN vcenters vc ON h.vcenter_id=vc.vcenter_id
+                WHERE h.run_id=(SELECT MAX(run_id) FROM vc_runs)
+                  AND LOWER(h.host_name) LIKE %s LIMIT 1
+            """, (f"%{frag}%",))
+            host = c2.fetchone()
+            if not host:
+                c2.execute("""
+                    SELECT *, cluster_name AS vcenter_name, 'Hyper-V' AS platform,
+                           (SELECT COUNT(*) FROM hyperv_vms hv
+                            WHERE hv.host_name=h.host_name AND hv.run_id=h.run_id) AS num_vms
+                    FROM hyperv_hosts h
+                    WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+                      AND LOWER(host_name) LIKE %s LIMIT 1
+                """, (f"%{frag}%",))
+                host = c2.fetchone()
+            c2.close(); conn2.close()
+            if not host: return None
+            clean = {k:(float(v) if hasattr(v,"__float__") and not isinstance(v,(int,bool)) else v)
+                     for k,v in host.items()}
+            cols = [{"key":k,"label":k.replace("_"," ").title()} for k in clean.keys()]
+            return _tbl(f"Host Detail: {host.get('host_name', '')}", cols, [clean])
+        def ds_detail(frag):
+            conn2 = get_db_connection(); c2 = conn2.cursor()
+            c2.execute("""
+                SELECT d.datastore_name, d.cluster_name, vc.vcenter_name,
+                       d.type, d.status, d.is_accessible, d.num_vms,
+                       ROUND(d.capacity_mb/1024,2) AS capacity_gb,
+                       ROUND(d.used_mb/1024,2)     AS used_gb,
+                       ROUND(d.free_mb/1024,2)      AS free_gb,
+                       d.free_percent, 'VMware' AS platform
+                FROM datastores d JOIN vcenters vc ON d.vcenter_id=vc.vcenter_id
+                WHERE d.run_id=(SELECT MAX(run_id) FROM vc_runs)
+                  AND LOWER(d.datastore_name) LIKE %s LIMIT 1
+            """, (f"%{frag}%",))
+            ds = c2.fetchone()
+            if not ds:
+                c2.execute("""
+                    SELECT datastore_name, cluster_name,
+                           cluster_name AS vcenter_name,
+                           type, status, is_accessible, num_vms,
+                           capacity_gb, used_gb, free_gb, free_percent,
+                           'Hyper-V' AS platform
+                    FROM hyperv_datastores
+                    WHERE run_id=(SELECT MAX(run_id) FROM hyperv_runs)
+                      AND LOWER(datastore_name) LIKE %s LIMIT 1
+                """, (f"%{frag}%",))
+                ds = c2.fetchone()
+            c2.close(); conn2.close()
+            if not ds: return None
+            clean = {k:(float(v) if hasattr(v,"__float__") and not isinstance(v,(int,bool)) else v)
+                     for k,v in ds.items()}
+            cols = [{"key":k,"label":k.replace("_"," ").title()} for k in clean.keys()]
+            return _tbl(f"Datastore: {ds.get('datastore_name', '')}", cols, [clean])
+        # ── 8. Safe placement (fixes Decimal * float) ─────────
+        def safe_place(reqs):
+            try:
+                raw = get_vm_placement_suggestions(reqs)
+                clean = []
+                for s in raw:
+                    s2 = dict(s)
+                    s2["total_score"] = float(s2.get("total_score") or 0)
+                    ar = s2.get("available_resources", {})
+                    s2["available_resources"] = {k: float(v or 0) for k,v in ar.items()}
+                    sc = s2.get("scores", {})
+                    s2["scores"] = {k: float(v or 0) for k,v in sc.items()}
+                    clean.append(s2)
+                return clean
+            except Exception:
+                return []
+
+        def parse_reqs(q):
+            cpu=2; ram=4; stor=50; plat="any"
+            m = re.search(r'(\d+)\s*(?:vcpu|vcore|cpu|core)', q)
+            if m: cpu = int(m.group(1))
+
+            m = re.search(r'(\d+)\s*gb\s*(?:ram|memory|mem)', q)
+            if m: ram = int(m.group(1))
+
+            m = re.search(r'(\d+)\s*gb\s*(?:disk|storage|stor)', q)
+            if m: stor = int(m.group(1))
+            if "vmware" in q: plat="vmware"
+            elif _kw(q,"hyper-v","hyperv"): plat="hyperv"
+            return {"cpu_cores":cpu,"ram_gb":ram,"storage_gb":stor,"platform":plat}
+
+        # ── 9. Direct-answer engine ────────────────────────────
+        def direct(q):
+            # REPORTS
+            if _kw(q,"full report","infrastructure report","complete report"):
+                return None, rep_full()
+            if _kw(q,"host report","hosts report"):
+                return None, rep_hosts()
+            if _kw(q,"datastore report","datastores report","storage report"):
+                return None, rep_ds()
+            if _kw(q,"vm report","vms report","vms per cluster"):
+                return None, rep_vms_per_cluster()
+            if "cpu report" in q:
+                return None, rep_cpu()
+            if _kw(q,"memory report","mem report","ram report"):
+                return None, rep_memory()
+            if "cluster report" in q:
+                return None, rep_clusters()
+
+            # RECOMMENDATIONS
+            if _kw(q,"recommend","recommendation","capacity plan",
+                     "what should i","advice","optimize","optimise"):
+                if not _kw(q,"place","placement","where","vm placement"):
+                    return None, recommendations()
+
+            # HISTORICAL VMs
+            if _kw(q,"created last month","added last month","new vm last month","vms last month"):
+                return None, hist_vms(1,"1 month")
+            if _kw(q,"created last 3","last three month","last 3 month","new vm last 3","vms last 3"):
+                return None, hist_vms(3,"3 months")
+            if _kw(q,"created last year","last year vm","new vm last year","vms last year"):
+                return None, hist_vms(12,"1 year")
+            if _kw(q,"created last 6","last 6 month","vms last 6"):
+                return None, hist_vms(6,"6 months")
+
+            # HISTORICAL Datastores
+            if _kw(q,"datastore last month","new datastore last month"):
+                return None, hist_ds(1,"1 month")
+            if _kw(q,"datastore last 3","new datastore last 3"):
+                return None, hist_ds(3,"3 months")
+            if _kw(q,"datastore last year","new datastore last year"):
+                return None, hist_ds(12,"1 year")
+
+            # TRENDS — "show cpu trend for last 3 runs" / "cpu trend last 5"
+            m_t = re.search(r'(?:last|for)\\s*(\\d+)\\s*run', q)
+            n_r = int(m_t.group(1)) if m_t else 5
+            if _kw(q,"cpu trend","cpu history","show cpu trend","cpu over","cpu last run"):
+                return None, trend_report("cpu", n_r)
+            if _kw(q,"memory trend","ram trend","memory history","mem trend"):
+                return None, trend_report("memory", n_r)
+            if _kw(q,"storage trend","storage history"):
+                return None, trend_report("storage", n_r)
+
+            # ENTITY DETAIL
+            em = re.search(
+                r'(?:tell me about|info (?:on|for|about)|details (?:on|for|about)'
+                r'|show me|what is|about vm|show vm|vm detail|vm info)\\s+'
+                r'([a-zA-Z0-9_\\-\\.]+)', q)
+            if em:
+                frag = em.group(1).strip()
+                skip = {"vm","the","a","an","all","my","our","cluster","host",
+                        "datastore","latest","last","new","most","free"}
+                if frag not in skip:
+                    for fn in (vm_detail, host_detail, ds_detail):
+                        det = fn(frag)
+                        if det:
+                            return None, det
+                    return f"No VM, host or datastore found matching '{frag}'.", None
+
+            # HOST DETAIL
+            if _kw(q,"host info","host detail","tell me about host","info on host"):
+                mh = re.search(r'host\\s+([a-zA-Z0-9_\\-\\.]+)', q)
+                if mh:
+                    det = host_detail(mh.group(1))
+                    if det: return None, det
+
+            # DS DETAIL
+            if _kw(q,"datastore info","datastore detail","info on datastore"):
+                md = re.search(r'datastore\\s+([a-zA-Z0-9_\\-\\.]+)', q)
+                if md:
+                    det = ds_detail(md.group(1))
+                    if det: return None, det
+
+            # PLACEMENT
+            if _kw(q,"where should i place","where to place","where can i place",
+                     "suggest placement","best cluster for","best environment",
+                     "place a vm","place new vm","recommend cluster",
+                     "placement for","best place for"):
+                reqs = parse_reqs(q)
+                sug  = safe_place(reqs)
+                return None, {"type":"placement","requirements":reqs,
+                               "suggestions":sug[:5],"total_candidates":len(sug)}
+
+            # VM COUNTS — "hyper-v" / "hyperv" / "hyper v" all match
+            if _kw(q,"how many vm","how many of all vm","total vm",
+                     "number of vm","vm count","count vm","all vm",
+                     "how many virtual machine","total number of vm"):
+                if _kw(q,"vmware") and not _kw(q,"hyper"):
+                    return f"VMware VMs: **{vmware_vms}**", None
+                if _kw(q,"hyper-v","hyperv","hyper v"):
+                    return f"Hyper-V VMs: **{hyperv_vms}**", None
+                lines = [f"Total VMs: **{total_vms}** ({vmware_vms} VMware + {hyperv_vms} Hyper-V)\n"]
+                for vc,cnt in sorted(vcenter_vms.items(),key=lambda x:-x[1]):
+                    lines.append(f"  • {vc}: {cnt} VMs")
+                return "\n".join(lines), None
+
+            if _kw(q,"vms per vcenter","vm per vcenter","per vcenter","vm breakdown"):
+                lines=["VMs per vCenter:"]
+                for vc,cnt in sorted(vcenter_vms.items(),key=lambda x:-x[1]):
+                    lines.append(f"  • {vc}: {cnt} VMs  ({vcenter_clusters.get(vc,0)} clusters)")
+                return "\n".join(lines), None
+
+            # CLUSTER COUNTS
+            if _kw(q,"how many cluster","number of cluster","cluster count","total cluster"):
+                lines=[f"Total clusters: **{n_clusters}** ({len(vmw_cls)} VMware + {len(hv_cls)} Hyper-V)\n"]
+                for vc,cnt in sorted(vcenter_clusters.items(),key=lambda x:-x[1]):
+                    lines.append(f"  • {vc}: {cnt} clusters")
+                return "\n".join(lines), None
+
+            # HOST COUNTS
+            if _kw(q,"how many host","number of host","total host","host count"):
+                vmw_h=len([h for h in all_hosts if h["platform"]=="VMware"])
+                hv_h =len([h for h in all_hosts if h["platform"]=="Hyper-V"])
+                return f"Total hosts: **{n_hosts}** ({vmw_h} VMware + {hv_h} Hyper-V)", None
+
+            # DATASTORE COUNTS (must come before capacity check)
+            if _kw(q,"how many datastore","number of datastore","total datastore","datastore count"):
+                vmw_d=len([d for d in all_ds if d["platform"]=="VMware"])
+                hv_d =len([d for d in all_ds if d["platform"]=="Hyper-V"])
+                return f"Total datastores: **{n_ds}** ({vmw_d} VMware + {hv_d} Hyper-V)", None
+
+            # DATASTORE TOTAL CAPACITY (separate keywords)
+            if _kw(q,"total datastore capacity","total storage capacity","total capacity","overall datastore"):
+                tot  = round(sum(d["capacity_gb"] for d in all_ds)/1024,1)
+                free = round(sum(d["free_gb"]     for d in all_ds)/1024,1)
+                used = round(sum(d["used_gb"]     for d in all_ds)/1024,1)
+                return f"Total datastore capacity: **{tot} TB**\n  Used: {used} TB  |  Free: {free} TB", None
+
+            # CPU
+            if _kw(q,"highest cpu","most cpu","busiest cluster","most overloaded","most loaded"):
+                c=max(all_clusters,key=lambda x:x["cpu_usage"],default=None)
+                if c:
+                    pred=f"\n  Predicted next: {ml_pred[c['name']]}%" if c["name"] in ml_pred else ""
+                    return f"Highest CPU: **{c['name']}** ({c['platform']}, {c['vcenter']}) — {c['cpu_usage']}%{pred}", None
+
+            if _kw(q,"lowest cpu","idle cluster","most free cpu","free cpu","available cpu"):
+                top=sorted(all_clusters,key=lambda x:-x["free_cpu_ghz"])[:5]
+                lines=["Clusters with most free CPU:"]
+                for c in top:
+                    lines.append(f"  • {c['name']} ({c['platform']}): {c['free_cpu_ghz']} GHz free (used: {c['cpu_usage']}%)")
+                return "\n".join(lines), None
+
+            if _kw(q,"average cpu","avg cpu"):
+                av=_favg(vmw_cls,"cpu_usage"); ah=_favg(hv_cls,"cpu_usage")
+                if _kw(q,"vmware") and not _kw(q,"hyper"): return f"Average VMware CPU: **{av}%**", None
+                if _kw(q,"hyper-v","hyperv"): return f"Average Hyper-V CPU: **{ah}%**", None
+                return f"Average CPU — VMware: {av}%  |  Hyper-V: {ah}%", None
+
+            mt=re.search(r"cpu\\s*(?:usage|utilization|load)?\\s*(?:above|over|>|greater than)\\s*(\\d+)",q)
+            if mt:
+                thr=int(mt.group(1))
+                hits=sorted([c for c in all_clusters if c["cpu_usage"]>thr],key=lambda x:-x["cpu_usage"])
+                if not hits: return f"No clusters have CPU above {thr}%. ✓", None
+                lines=[f"Clusters with CPU > {thr}%:"]
+                for c in hits:
+                    pred=f" (pred: {ml_pred[c['name']]}%)" if c["name"] in ml_pred else ""
+                    lines.append(f"  • {c['name']} ({c['platform']}): {c['cpu_usage']}%{pred}")
+                return "\n".join(lines), None
+
+            # MEMORY
+            if _kw(q,"highest memory","highest ram","most memory used","most ram used","overcommit"):
+                c=max(all_clusters,key=lambda x:x["mem_usage"],default=None)
+                if c: return f"Highest RAM: **{c['name']}** ({c['platform']}) — {c['mem_usage']}%", None
+
+            if _kw(q,"most free memory","most free ram","free memory","free ram","available memory","available ram"):
+                top=sorted(all_clusters,key=lambda x:-x["free_ram_gb"])[:5]
+                lines=["Clusters with most free RAM:"]
+                for c in top:
+                    lines.append(f"  • {c['name']} ({c['platform']}): {c['free_ram_gb']} GB free (used: {c['mem_usage']}%)")
+                return "\n".join(lines), None
+
+            mm=re.search(r"mem(?:ory)?\\s*(?:usage)?\\s*(?:above|over|>)\\s*(\\d+)",q)
+            if mm:
+                thr=int(mm.group(1))
+                hits=sorted([c for c in all_clusters if c["mem_usage"]>thr],key=lambda x:-x["mem_usage"])
+                if not hits: return f"No clusters have memory above {thr}%. ✓", None
+                lines=[f"Clusters with RAM > {thr}%:"]
+                for c in hits: lines.append(f"  • {c['name']} ({c['platform']}): {c['mem_usage']}%")
+                return "\n".join(lines), None
+
+            # STORAGE
+            if _kw(q,"most free storage","free storage","cluster with most storage"):
+                top=sorted(all_clusters,key=lambda x:-x["free_storage_tb"])[:5]
+                lines=["Clusters with most free storage:"]
+                for c in top: lines.append(f"  • {c['name']} ({c['platform']}): {c['free_storage_tb']} TB free")
+                return "\n".join(lines), None
+
+            if _kw(q,"total free storage","total storage free"):
+                tb =round(sum(d["free_gb"]     for d in all_ds)/1024,1)
+                cap=round(sum(d["capacity_gb"] for d in all_ds)/1024,1)
+                return f"Total free storage: **{tb} TB** of {cap} TB total", None
+
+            # DATASTORES
+            if _kw(q,"datastore with most free","most free datastore","datastore most free","datastore with most space"):
+                d=max(all_ds,key=lambda x:x["free_gb"],default=None)
+                if d: return f"Most free: **{d['name']}** ({d['platform']}, {d['cluster']}) — {d['free_gb']} GB free ({d['free_percent']}%)", None
+
+            if _kw(q,"fullest datastore","most full datastore","datastore most full"):
+                d=min(all_ds,key=lambda x:x["free_percent"],default=None)
+                if d: return f"Fullest: **{d['name']}** ({d['platform']}) — {d['used_percent']}% used ({d['free_percent']}% free)", None
+
+            if _kw(q,"almost full","low disk","low storage","nearly full","running out",
+                     "less than 10","less than 20","< 10","< 20","critical datastore"):
+                thr=20
+                m3=re.search(r"(\\d+)\\s*%",q)
+                if m3: thr=int(m3.group(1))
+                hits=sorted([d for d in all_ds if d["free_percent"]<thr],key=lambda x:x["free_percent"])
+                if not hits: return f"No datastores below {thr}% free. ✓", None
+                lines=[f"Datastores below {thr}% free ({len(hits)} found):"]
+                for d in hits:
+                    lines.append(f"  • {d['name']} ({d['platform']}, {d['cluster']}): {d['free_percent']}% free ({d['free_gb']}/{d['capacity_gb']} GB)")
+                return "\n".join(lines), None
+
+            m4=re.search(r"(?:used|usage)\\s*(?:above|over|>)\\s*(\\d+)",q)
+            if m4 and _kw(q,"datastore","storage","disk"):
+                thr=int(m4.group(1))
+                hits=sorted([d for d in all_ds if d["used_percent"]>thr],key=lambda x:-x["used_percent"])
+                if not hits: return f"No datastores with used > {thr}%. ✓", None
+                lines=[f"Datastores used > {thr}%:"]
+                for d in hits: lines.append(f"  • {d['name']} ({d['platform']}): {d['used_percent']}% used")
+                return "\n".join(lines), None
+
+            # PLATFORM COMPARISON
+            if _kw(q,"vmware vs hyper","compare platform","which platform","platform comparison",
+                     "total cpu capacity","compare vm count between","more free memory vmware"):
+                vmw_h=len([h for h in all_hosts if h["platform"]=="VMware"])
+                hv_h =len([h for h in all_hosts if h["platform"]=="Hyper-V"])
+                vmw_d=len([d for d in all_ds   if d["platform"]=="VMware"])
+                hv_d =len([d for d in all_ds   if d["platform"]=="Hyper-V"])
+                rows=[
+                    {"metric":"VMs",           "vmware":vmware_vms,  "hyperv":hyperv_vms},
+                    {"metric":"Clusters",       "vmware":len(vmw_cls),"hyperv":len(hv_cls)},
+                    {"metric":"Hosts",          "vmware":vmw_h,       "hyperv":hv_h},
+                    {"metric":"Datastores",     "vmware":vmw_d,       "hyperv":hv_d},
+                    {"metric":"Avg CPU %",      "vmware":_favg(vmw_cls,"cpu_usage"),
+                                                "hyperv":_favg(hv_cls,"cpu_usage")},
+                    {"metric":"Free RAM (GB)",
+                     "vmware":round(sum(c["free_ram_gb"] for c in vmw_cls),1),
+                     "hyperv":round(sum(c["free_ram_gb"] for c in hv_cls),1)},
+                    {"metric":"Total CPU (GHz)",
+                     "vmware":round(sum(c["total_cpu_ghz"] for c in vmw_cls),1),
+                     "hyperv":round(sum(c["total_cpu_ghz"] for c in hv_cls),1)},
+                ]
+                cols=[{"key":"metric","label":"Metric"},
+                      {"key":"vmware","label":"VMware"},
+                      {"key":"hyperv","label":"Hyper-V"}]
+                return None, _tbl("Platform Comparison: VMware vs Hyper-V", cols, rows)
+
+            # HEALTH
+            if _kw(q,"high on both","both cpu and mem","at risk","cpu and memory issue"):
+                hits=[c for c in all_clusters if c["cpu_usage"]>70 and c["mem_usage"]>70]
+                if not hits: return "No clusters have both CPU and RAM above 70%. ✓", None
+                lines=["Clusters at risk (CPU>70% AND RAM>70%):"]
+                for c in hits:
+                    lines.append(f"  • {c['name']} ({c['platform']}): CPU {c['cpu_usage']}%  RAM {c['mem_usage']}%")
+                return "\n".join(lines), None
+
+            if _kw(q,"healthiest","best cluster","most healthy","most free resources"):
+                def score(c):
+                    sp=(c["free_storage_tb"]/(c["total_storage_gb"]/1024+.001))*100
+                    return (100-c["cpu_usage"])*.4+(100-c["mem_usage"])*.35+sp*.25
+                best=max(all_clusters,key=score,default=None)
+                if best:
+                    return (f"Healthiest: **{best['name']}** ({best['platform']})\n"
+                            f"  CPU:{best['cpu_usage']}%  RAM:{best['mem_usage']}%  "
+                            f"Free stor:{best['free_storage_tb']}TB  VMs:{best['num_vms']}"), None
+
+            if _kw(q,"underutilis","underutiliz","underused","wasted resource"):
+                hits=[c for c in all_clusters if c["cpu_usage"]<30 and c["mem_usage"]<40]
+                if not hits: return "No clusters found with CPU<30% and RAM<40%.", None
+                lines=["Underutilised clusters (CPU<30% AND RAM<40%):"]
+                for c in hits:
+                    lines.append(f"  • {c['name']} ({c['platform']}): CPU {c['cpu_usage']}%  RAM {c['mem_usage']}%  VMs:{c['num_vms']}")
+                return "\n".join(lines), None
+
+            if _kw(q,"host with most vm","busiest host"):
+                top=sorted(all_hosts,key=lambda x:int(x.get("num_vms") or 0),reverse=True)[:5]
+                lines=["Hosts with most VMs:"]
+                for h in top:
+                    lines.append(f"  • {h['host_name']} ({h['platform']}, {h.get('cluster_name','')}): {h['num_vms']} VMs")
+                return "\n".join(lines), None
+
+            if _kw(q,"vcenter most cluster","vcenter with most cluster"):
+                if vcenter_clusters:
+                    top_vc=max(vcenter_clusters,key=vcenter_clusters.get)
+                    return f"vCenter with most clusters: **{top_vc}** ({vcenter_clusters[top_vc]} clusters)", None
+
+            if _kw(q,"vcenter summary","per vcenter","by vcenter","vcenter"):
+                lines=["vCenter summary:"]
+                for vc in sorted(vcenter_vms,key=lambda x:-vcenter_vms.get(x,0)):
+                    lines.append(f"  • {vc}: {vcenter_vms.get(vc,0)} VMs, {vcenter_clusters.get(vc,0)} clusters")
+                return "\n".join(lines), None
+
+            m5=re.search(r"compare\\s+(.+?)\\s+(?:and|vs|versus)\\s+(.+?)(?:\\s*$|[.?])",q)
+            if m5:
+                n1,n2=m5.group(1).strip(),m5.group(2).strip()
+                c1=next((c for c in all_clusters if n1 in c["name"].lower()),None)
+                c2=next((c for c in all_clusters if n2 in c["name"].lower()),None)
+                if c1 and c2:
+                    rows=[
+                        {"m":"Platform",    "c1":c1["platform"],      "c2":c2["platform"]},
+                        {"m":"vCenter",     "c1":c1["vcenter"],       "c2":c2["vcenter"]},
+                        {"m":"CPU %",       "c1":c1["cpu_usage"],     "c2":c2["cpu_usage"]},
+                        {"m":"Free CPU GHz","c1":c1["free_cpu_ghz"],  "c2":c2["free_cpu_ghz"]},
+                        {"m":"RAM %",       "c1":c1["mem_usage"],     "c2":c2["mem_usage"]},
+                        {"m":"Free RAM GB", "c1":c1["free_ram_gb"],   "c2":c2["free_ram_gb"]},
+                        {"m":"Storage %",   "c1":c1["storage_usage"], "c2":c2["storage_usage"]},
+                        {"m":"VMs",         "c1":c1["num_vms"],       "c2":c2["num_vms"]},
+                        {"m":"Hosts",       "c1":c1["num_hosts"],     "c2":c2["num_hosts"]},
+                    ]
+                    cols=[{"key":"m","label":"Metric"},
+                          {"key":"c1","label":c1["name"]},
+                          {"key":"c2","label":c2["name"]}]
+                    return None, _tbl(f"Compare: {c1['name']} vs {c2['name']}", cols, rows)
+
+            if _kw(q,"most vms","most vm","cluster with most vm"):
+                c=max(all_clusters,key=lambda x:x["num_vms"],default=None)
+                if c: return f"Most VMs: **{c['name']}** ({c['platform']}) — {c['num_vms']} VMs", None
+
+            if _kw(q,"fewest vm","least vm","cluster with fewest"):
+                c=min(all_clusters,key=lambda x:x["num_vms"],default=None)
+                if c: return f"Fewest VMs: **{c['name']}** ({c['platform']}) — {c['num_vms']} VMs", None
+
+            for c in all_clusters:
+                if c["name"].lower() in q:
+                    pred=f"\n  Predicted next CPU: {ml_pred[c['name']]}%" if c["name"] in ml_pred else ""
+                    return (f"**{c['name']}** ({c['platform']}, vCenter:{c['vcenter']})\n"
+                            f"  CPU:{c['cpu_usage']}%  Free:{c['free_cpu_ghz']} GHz\n"
+                            f"  RAM:{c['mem_usage']}%  Free:{c['free_ram_gb']} GB\n"
+                            f"  Stor:{c['storage_usage']}%  Free:{c['free_storage_tb']} TB\n"
+                            f"  VMs:{c['num_vms']}  Hosts:{c['num_hosts']}"+pred), None
+
+            for d in all_ds:
+                if d["name"].lower() in q:
+                    return (f"**{d['name']}** ({d['platform']}, cluster:{d['cluster']})\n"
+                            f"  Cap:{d['capacity_gb']} GB  Used:{d['used_gb']} GB  Free:{d['free_gb']} GB ({d['free_percent']}%)"), None
+
+            if _kw(q,"predict","forecast","next cpu","future cpu","cpu next run"):
+                if not ml_pred:
+                    return "No ML models trained yet. Use 'Train ML Models' in sidebar (superadmin).", None
+                if _kw(q,"hit limit","run out","limit soonest","exceed"):
+                    risks=sorted([(n,p) for n,p in ml_pred.items() if p>80],key=lambda x:-x[1])
+                    if not risks: return "No cluster predicted to exceed 80% next run. ✓", None
+                    lines=["Clusters predicted >80% CPU next run:"]
+                    for n,p in risks: lines.append(f"  • {n}: {p}%")
+                    return "\n".join(lines), None
+                lines=["CPU predictions (next run):"]
+                for n,p in sorted(ml_pred.items(),key=lambda x:-x[1]):
+                    lines.append(f"  • {n}: {p}%")
+                return "\n".join(lines), None
+
+            if _kw(q,"health","overview","summary","status","how is","overall","infrastructure"):
+                high_cpu=[c for c in all_clusters if c["cpu_usage"]>80]
+                high_mem=[c for c in all_clusters if c["mem_usage"]>80]
+                crit_ds =[d for d in all_ds if d["free_percent"]<10]
+                warn_ds =[d for d in all_ds if 10<=d["free_percent"]<20]
+                metrics=[
+                    {"label":"Total VMs",   "value":total_vms,  "status":"ok"},
+                    {"label":"VMware VMs",  "value":vmware_vms, "status":"ok"},
+                    {"label":"Hyper-V VMs", "value":hyperv_vms, "status":"ok"},
+                    {"label":"Clusters",    "value":n_clusters, "status":"ok"},
+                    {"label":"Hosts",       "value":n_hosts,    "status":"ok"},
+                    {"label":"Datastores",  "value":n_ds,       "status":"ok"},
+                    {"label":">80% CPU",    "value":len(high_cpu),"status":"crit" if high_cpu else "ok"},
+                    {"label":">80% RAM",    "value":len(high_mem),"status":"warn" if high_mem else "ok"},
+                    {"label":"DS <10% free","value":len(crit_ds), "status":"crit" if crit_ds else "ok"},
+                    {"label":"DS <20% free","value":len(warn_ds), "status":"warn" if warn_ds else "ok"},
+                ]
+                note_parts=[]
+                if high_cpu: note_parts.append("⚠ High CPU: "+", ".join(c["name"] for c in high_cpu))
+                if high_mem: note_parts.append("⚠ High RAM: "+", ".join(c["name"] for c in high_mem))
+                if crit_ds:  note_parts.append("🔴 Critical DS: "+", ".join(d["name"] for d in crit_ds))
+                note="  ".join(note_parts) or "✓ All systems within healthy thresholds."
+                return None, {"type":"metrics","title":"Infrastructure Overview",
+                               "metrics":metrics,"note":note}
+
+            return None, None   # → LLM
+
+        text_ans, rep = direct(q)
+
+        # ── 10. LLM fallback — ALWAYS used, never crashes ──────
+        if text_ans is None and rep is None:
+            top_cls = sorted(all_clusters, key=lambda x: -x["cpu_usage"])[:12]
+            cls_txt = "\n".join(
+                f"  [{c['platform']}] {c['name']} vCenter:{c['vcenter']} "
+                f"CPU:{c['cpu_usage']}% RAM:{c['mem_usage']}% "
+                f"FreeCPU:{c['free_cpu_ghz']}GHz FreeRAM:{c['free_ram_gb']}GB VMs:{c['num_vms']}"
+                for c in top_cls
+            )
+            ds_txt = "\n".join(
+                f"  [{d['platform']}] {d['name']} "
+                f"Free:{d['free_gb']}GB({d['free_percent']}%)"
+                for d in sorted(all_ds, key=lambda x: x["free_percent"])[:12]
+            )
+            hst_txt = "\n".join(
+                f"  [{h.get('platform','')}] {h.get('host_name','')} "
+                f"Cluster:{h.get('cluster_name','')} "
+                f"CPU:{h.get('cpu_cores','?')} cores  "
+                f"RAM:{_f(h.get('memory_total_gb',0))} GB  "
+                f"VMs:{h.get('num_vms',0)}"
+                for h in all_hosts[:10]
+            )
+            prompt = (
+                f"You are {AGENT_NAME}, an expert AI assistant for a VMware and Hyper-V "
+                f"data centre. Answer from the data below. If data is insufficient, give the "
+                f"best helpful guidance you can. Be concise and professional.\n\n"
+                f"Environment: {total_vms} VMs ({vmware_vms} VMware / {hyperv_vms} Hyper-V) | "
+                f"{n_clusters} clusters | {n_hosts} hosts | {n_ds} datastores\n\n"
+                f"Clusters (by CPU load):\n{cls_txt}\n\n"
+                f"Datastores (least free first):\n{ds_txt}\n\n"
+                f"Hosts sample:\n{hst_txt}\n\n"
+                f"Question: {question}\nAnswer:"
+            )
+            llm_ans = _llm(prompt)
+            text_ans = llm_ans or (
+                f"I can answer questions about your {total_vms} VMs, {n_clusters} clusters, "
+                f"{n_hosts} hosts and {n_ds} datastores. Try asking:\n"
+                f"  • 'infrastructure overview'\n"
+                f"  • 'generate full report'\n"
+                f"  • 'VMs created last month'\n"
+                f"  • 'give me capacity recommendations'\n"
+                f"  • 'where to place a 4vCPU 16GB VM?'"
+            )
+
+        resp = {"question": question}
+        if rep:      resp["report"] = rep
+        if text_ans: resp["answer"] = text_ans
+        return jsonify(resp)
+
+    except Exception:
+        app.logger.error(f"AI ask error:\n{traceback.format_exc()}")
+        return jsonify({"error":"Internal server error — check Flask logs."}), 500
+
+
+@app.route("/ai_chat")
+@login_required
+def ai_chat():
+    return render_template("ai_chat.html")
+
+
+
+##################################################################################################
+#########################Reporting################################################################
+##################################################################################################
+
+# ============================================================================
+#  FULL REPORTING API ENDPOINTS
+# ============================================================================
+
+@app.route("/reporting")
+@login_required
+def reporting_page():
+    """Render the full reporting page"""
+    return render_template("reporting.html")
+
+
+
+
+@app.route("/api/reporting/overview")
+@login_required
+def reporting_overview():
+    """Get overview statistics including storage and both platforms (all clusters)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+
+    # ----- VMware -----
+    cursor.execute("""
+        SELECT COUNT(*) as count,
+               AVG(cpu_usage_percent) as avg_cpu,
+               AVG(memory_usage_percent) as avg_mem,
+               AVG(storage_usage_percent) as avg_storage
+        FROM clusters WHERE run_id = %s
+    """, (vmware_run_id,))
+    vmw_cluster = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) as count FROM hosts WHERE run_id = %s", (vmware_run_id,))
+    vmw_hosts = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) as count FROM vm_inventory WHERE run_id = %s", (vmware_run_id,))
+    vmw_vms = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) as count FROM datastores WHERE run_id = %s", (vmware_run_id,))
+    vmw_ds = cursor.fetchone()
+
+    # ----- Hyper‑V -----
+    cursor.execute("""
+        SELECT COUNT(*) as count,
+               AVG(cpu_usage_percent) as avg_cpu,
+               AVG(memory_usage_percent) as avg_mem,
+               AVG(storage_usage_percent) as avg_storage
+        FROM hyperv_clusters WHERE run_id = %s
+    """, (hyperv_run_id,))
+    hv_cluster = cursor.fetchone()
+
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_hosts WHERE run_id = %s", (hyperv_run_id,))
+    hv_hosts = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_vms WHERE run_id = %s", (hyperv_run_id,))
+    hv_vms = cursor.fetchone()
+    cursor.execute("SELECT COUNT(*) as count FROM hyperv_datastores WHERE run_id = %s", (hyperv_run_id,))
+    hv_ds = cursor.fetchone()
+
+    # ----- ALL clusters (no LIMIT) for the chart -----
+    cursor.execute("""
+        SELECT cluster_name, 
+               COALESCE(cpu_usage_percent, 0) as cpu_usage_percent,
+               COALESCE(memory_usage_percent, 0) as memory_usage_percent,
+               COALESCE(storage_usage_percent, 0) as storage_usage_percent,
+               'VMware' as platform
+        FROM clusters WHERE run_id = %s
+        UNION ALL
+        SELECT cluster_name,
+               COALESCE(cpu_usage_percent, 0),
+               COALESCE(memory_usage_percent, 0),
+               COALESCE(storage_usage_percent, 0),
+               'Hyper-V' as platform
+        FROM hyperv_clusters WHERE run_id = %s
+        ORDER BY platform, cluster_name
+    """, (vmware_run_id, hyperv_run_id))
+    all_clusters = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    total_clusters = (vmw_cluster['count'] or 0) + (hv_cluster['count'] or 0)
+    total_hosts    = (vmw_hosts['count'] or 0) + (hv_hosts['count'] or 0)
+    total_vms      = (vmw_vms['count'] or 0) + (hv_vms['count'] or 0)
+    total_ds       = (vmw_ds['count'] or 0) + (hv_ds['count'] or 0)
+
+    def safe_avg(vmw_val, hv_val, total):
+        if total == 0:
+            return 0
+        return round(((vmw_val or 0) + (hv_val or 0)) / 2, 1)
+
+    avg_cpu = safe_avg(vmw_cluster['avg_cpu'], hv_cluster['avg_cpu'], total_clusters)
+    avg_mem = safe_avg(vmw_cluster['avg_mem'], hv_cluster['avg_mem'], total_clusters)
+    avg_storage = safe_avg(vmw_cluster['avg_storage'], hv_cluster['avg_storage'], total_clusters)
+
+    # Prepare chart data (use cluster name + platform for clarity)
+    labels = [f"{c['cluster_name']} ({c['platform']})" for c in all_clusters]
+    cpu_data = [float(c['cpu_usage_percent']) for c in all_clusters]
+    mem_data = [float(c['memory_usage_percent']) for c in all_clusters]
+    storage_data = [float(c['storage_usage_percent']) for c in all_clusters]
+
+    return jsonify({
+        "summary": {
+            "total_clusters": total_clusters,
+            "total_hosts": total_hosts,
+            "total_vms": total_vms,
+            "total_datastores": total_ds,
+            "avg_cpu_usage": avg_cpu,
+            "avg_memory_usage": avg_mem,
+            "avg_storage_usage": avg_storage,
+            "vmware_clusters": vmw_cluster['count'] or 0,
+            "hyperv_clusters": hv_cluster['count'] or 0,
+            "vmware_hosts": vmw_hosts['count'] or 0,
+            "hyperv_hosts": hv_hosts['count'] or 0,
+            "vmware_vms": vmw_vms['count'] or 0,
+            "hyperv_vms": hv_vms['count'] or 0
+        },
+        "chart": {
+            "labels": labels,
+            "cpu_data": cpu_data,
+            "memory_data": mem_data,
+            "storage_data": storage_data
+        }
+    })
+
+
+
+@app.route("/api/reporting/clusters")
+@login_required
+def reporting_clusters():
+    """Get clusters report with filters"""
+    platform = request.args.get('platform')
+    min_cpu = request.args.get('min_cpu')
+    max_cpu = request.args.get('max_cpu')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+
+    results = []
+
+    # VMware clusters
+    if not platform or platform == 'VMware' or platform == 'all':
+        query = """
+            SELECT c.*, vc.vcenter_name, 'VMware' as platform
+            FROM clusters c
+            JOIN vcenters vc ON c.vcenter_id = vc.vcenter_id
+            WHERE c.run_id = %s
+        """
+        params = [vmware_run_id]
+
+        if min_cpu:
+            query += " AND c.cpu_usage_percent >= %s"
+            params.append(float(min_cpu))
+        if max_cpu:
+            query += " AND c.cpu_usage_percent <= %s"
+            params.append(float(max_cpu))
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    # Hyper-V clusters
+    if not platform or platform == 'Hyper-V' or platform == 'all':
+        query = "SELECT *, cluster_name as vcenter_name, 'Hyper-V' as platform FROM hyperv_clusters WHERE run_id = %s"
+        params = [hyperv_run_id]
+
+        if min_cpu:
+            query += " AND cpu_usage_percent >= %s"
+            params.append(float(min_cpu))
+        if max_cpu:
+            query += " AND cpu_usage_percent <= %s"
+            params.append(float(max_cpu))
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    cursor.close()
+    conn.close()
+
+    # Convert Decimal to float for JSON serialization
+    for row in results:
+        for key, value in row.items():
+            if isinstance(value, Decimal):
+                row[key] = float(value)
+
+    return jsonify(results)
+
+@app.route("/api/reporting/hosts")
+@login_required
+def reporting_hosts():
+    """Get hosts report with filters"""
+    platform = request.args.get('platform')
+    power_state = request.args.get('power_state')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+
+    results = []
+
+    # VMware hosts
+    if not platform or platform == 'VMware' or platform == 'all':
+        query = """
+            SELECT h.*, vc.vcenter_name, 'VMware' as platform,
+                   (SELECT COUNT(*) FROM vm_inventory vm WHERE vm.hostname = h.host_name AND vm.run_id = h.run_id) as num_vms
+            FROM hosts h
+            JOIN vcenters vc ON h.vcenter_id = vc.vcenter_id
+            WHERE h.run_id = %s
+        """
+        params = [vmware_run_id]
+
+        if power_state and power_state != 'all':
+            query += " AND h.power_state = %s"
+            params.append(power_state)
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    # Hyper-V hosts
+    if not platform or platform == 'Hyper-V' or platform == 'all':
+        query = """
+            SELECT *, cluster_name as vcenter_name, 'Hyper-V' as platform,
+                   (SELECT COUNT(*) FROM hyperv_vms hv WHERE hv.host_name = h.host_name AND hv.run_id = h.run_id) as num_vms
+            FROM hyperv_hosts h
+            WHERE run_id = %s
+        """
+        params = [hyperv_run_id]
+
+        if power_state and power_state != 'all':
+            query += " AND power_state = %s"
+            params.append(power_state)
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    cursor.close()
+    conn.close()
+
+    for row in results:
+        for key, value in row.items():
+            if isinstance(value, Decimal):
+                row[key] = float(value)
+
+    return jsonify(results)
+
+@app.route("/api/reporting/vms")
+@login_required
+def reporting_vms():
+    """Get VMs report with pagination and filters (power state, platform, search)"""
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+    platform = request.args.get('platform')       # 'VMware', 'Hyper-V', or 'all'
+    power_state = request.args.get('power_state') # 'poweredOn', 'poweredOff', or 'all'
+    search = request.args.get('search', '').strip()
+
+    # Get all VMs (without pagination) matching platform and search
+    # Using a very large per_page (1M) to fetch everything
+    all_results = get_unified_vms(
+        vcenter_list=None if platform == 'all' else [platform] if platform else None,
+        host_name=None,
+        cluster_name=None,
+        search_term=search if search else None,
+        page=1,
+        per_page=1000000   # effectively fetch all
+    )
+    all_vms = all_results['data']
+
+    # Apply power state filter if specified
+    if power_state and power_state != 'all':
+        filtered_vms = [vm for vm in all_vms if vm.get('power_state') == power_state]
+    else:
+        filtered_vms = all_vms
+
+    total = len(filtered_vms)
+
+    # Paginate manually
+    start = (page - 1) * per_page
+    end = start + per_page
+    paginated = filtered_vms[start:end]
+
+    return jsonify({
+        "data": paginated,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page
+    })
+
+
+
+@app.route("/api/reporting/datastores")
+@login_required
+def reporting_datastores():
+    """Get datastores report with filters"""
+    platform = request.args.get('platform')
+    free_threshold = request.args.get('free_threshold')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    vmware_run_id, hyperv_run_id = get_latest_run_ids()
+
+    results = []
+
+    # VMware datastores
+    if not platform or platform == 'VMware' or platform == 'all':
+        query = """
+            SELECT d.*, vc.vcenter_name, 'VMware' as platform
+            FROM datastores d
+            JOIN vcenters vc ON d.vcenter_id = vc.vcenter_id
+            WHERE d.run_id = %s
+        """
+        params = [vmware_run_id]
+
+        if free_threshold:
+            query += " AND d.free_percent < %s"
+            params.append(float(free_threshold))
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    # Hyper-V datastores
+    if not platform or platform == 'Hyper-V' or platform == 'all':
+        query = """
+            SELECT *, cluster_name as vcenter_name, 'Hyper-V' as platform
+            FROM hyperv_datastores
+            WHERE run_id = %s
+        """
+        params = [hyperv_run_id]
+
+        if free_threshold:
+            query += " AND free_percent < %s"
+            params.append(float(free_threshold))
+
+        cursor.execute(query, params)
+        results.extend(cursor.fetchall())
+
+    cursor.close()
+    conn.close()
+
+    for row in results:
+        for key, value in row.items():
+            if isinstance(value, Decimal):
+                row[key] = float(value)
+
+    return jsonify(results)
+
+@app.route("/api/reporting/trends")
+@login_required
+def reporting_trends():
+    """Get trend analysis data for charts (fixed for MariaDB)"""
+    metric = request.args.get('metric', 'cpu')
+    runs = int(request.args.get('runs', 10))
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Step 1: Get the top 5 clusters by CPU usage from the latest run
+    cursor.execute("""
+        SELECT cluster_name
+        FROM clusters
+        WHERE run_id = (SELECT MAX(run_id) FROM vc_runs)
+        ORDER BY cpu_usage_percent DESC
+        LIMIT 5
+    """)
+    top_clusters = [row['cluster_name'] for row in cursor.fetchall()]
+    
+    if not top_clusters:
+        return jsonify({'labels': [], 'datasets': []})
+    
+    # Step 2: Fetch historical data for those clusters
+    placeholders = ','.join(['%s'] * len(top_clusters))
+    query = f"""
+        SELECT c.cluster_name, r.run_timestamp,
+               c.cpu_usage_percent, c.memory_usage_percent, c.storage_usage_percent
+        FROM clusters c
+        JOIN vc_runs r ON c.run_id = r.run_id
+        WHERE c.cluster_name IN ({placeholders})
+        ORDER BY c.cluster_name, r.run_timestamp ASC
+    """
+    cursor.execute(query, top_clusters)
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    # Organize data by cluster
+    clusters_data = {}
+    for row in rows:
+        cluster = row['cluster_name']
+        if cluster not in clusters_data:
+            clusters_data[cluster] = {'timestamps': [], 'values': []}
+        # Keep only last 'runs' entries per cluster
+        clusters_data[cluster]['timestamps'].append(str(row['run_timestamp'])[:10])
+        if metric == 'cpu':
+            val = float(row['cpu_usage_percent'] or 0)
+        elif metric == 'memory':
+            val = float(row['memory_usage_percent'] or 0)
+        else:
+            val = float(row['storage_usage_percent'] or 0)
+        clusters_data[cluster]['values'].append(val)
+    
+    # Trim to last 'runs' entries and prepare chart data
+    datasets = []
+    colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b']
+    for i, (cluster, data) in enumerate(clusters_data.items()):
+        # Keep only the most recent 'runs' values
+        if len(data['values']) > runs:
+            data['values'] = data['values'][-runs:]
+            data['timestamps'] = data['timestamps'][-runs:]
+        datasets.append({
+            'label': cluster,
+            'data': data['values'],
+            'borderColor': colors[i % len(colors)],
+            'backgroundColor': colors[i % len(colors)] + '20',
+            'fill': True,
+            'tension': 0.4
+        })
+    
+    # Use timestamps from the first cluster (all should have same length)
+    timestamps = list(clusters_data.values())[0]['timestamps'] if clusters_data else []
+    
+    return jsonify({
+        'labels': timestamps,
+        'datasets': datasets
+    })
+
+
+
+
+
+
+from datetime import datetime, timedelta
+
+@app.route("/api/reporting/historical")
+@login_required
+def reporting_historical():
+    """Get historical data for VMs, Hosts, or Datastores.
+       Period can be: 1w,2w,3w,1m,3m,6m,9m,1y
+    """
+    report_type = request.args.get('type', 'vms')
+    period = request.args.get('period', '1m')
+
+    period_days = {
+        '1w': 7, '2w': 14, '3w': 21,
+        '1m': 30, '3m': 90, '6m': 180, '9m': 270, '1y': 365
+    }.get(period, 30)
+
+    cutoff_date = (datetime.now() - timedelta(days=period_days)).strftime('%Y-%m-%d %H:%M:%S')
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    results = []
+
+    if report_type == 'vms':
+        cursor.execute("""
+            SELECT vm.vm_name, 'VMware' as platform, vc.vcenter_name,
+                   vm.cpu, vm.ram_mb, vm.os, r.run_timestamp as created_at, r.run_id
+            FROM vm_inventory vm
+            JOIN vcenters vc ON vm.vcenter_id = vc.vcenter_id
+            JOIN vc_runs r ON vm.run_id = r.run_id
+            WHERE vm.run_id = (SELECT MIN(v2.run_id) FROM vm_inventory v2 WHERE v2.vm_name = vm.vm_name)
+              AND r.run_timestamp >= %s
+            UNION ALL
+            SELECT vm_name, 'Hyper-V' as platform, cluster_name as vcenter_name,
+                   cpu, ram_mb, os, r.run_timestamp, r.run_id
+            FROM hyperv_vms hv
+            JOIN hyperv_runs r ON hv.run_id = r.run_id
+            WHERE hv.run_id = (SELECT MIN(h2.run_id) FROM hyperv_vms h2 WHERE h2.vm_name = hv.vm_name)
+              AND r.run_timestamp >= %s
+            ORDER BY created_at DESC
+        """, (cutoff_date, cutoff_date))
+
+        for row in cursor.fetchall():
+            results.append({
+                'name': row['vm_name'],
+                'platform': row['platform'],
+                'vcenter': row['vcenter_name'],
+                'cpu': row['cpu'],
+                'ram_gb': round((row['ram_mb'] or 0) / 1024, 1),
+                'os': row['os'],
+                'created_at': str(row['created_at'])[:16],
+                'run_id': row['run_id']
+            })
+
+    elif report_type == 'hosts':
+        cursor.execute("""
+            SELECT h.host_name, 'VMware' as platform, vc.vcenter_name,
+                   h.cpu_cores, h.memory_total_gb, r.run_timestamp as created_at, r.run_id
+            FROM hosts h
+            JOIN vcenters vc ON h.vcenter_id = vc.vcenter_id
+            JOIN vc_runs r ON h.run_id = r.run_id
+            WHERE h.run_id = (SELECT MIN(h2.run_id) FROM hosts h2 WHERE h2.host_name = h.host_name)
+              AND r.run_timestamp >= %s
+            UNION ALL
+            SELECT host_name, 'Hyper-V' as platform, cluster_name as vcenter_name,
+                   cpu_cores, ROUND(memory_total_mb/1024,1) as memory_total_gb,
+                   r.run_timestamp, r.run_id
+            FROM hyperv_hosts h
+            JOIN hyperv_runs r ON h.run_id = r.run_id
+            WHERE h.run_id = (SELECT MIN(h2.run_id) FROM hyperv_hosts h2 WHERE h2.host_name = h.host_name)
+              AND r.run_timestamp >= %s
+            ORDER BY created_at DESC
+        """, (cutoff_date, cutoff_date))
+
+        for row in cursor.fetchall():
+            results.append({
+                'name': row['host_name'],
+                'platform': row['platform'],
+                'vcenter': row['vcenter_name'],
+                'cpu_cores': row['cpu_cores'],
+                'memory_gb': row['memory_total_gb'],
+                'created_at': str(row['created_at'])[:16],
+                'run_id': row['run_id']
+            })
+
+    elif report_type == 'datastores':
+        cursor.execute("""
+            SELECT d.datastore_name, 'VMware' as platform, vc.vcenter_name,
+                   ROUND(d.capacity_mb/1024,1) as capacity_gb,
+                   ROUND(d.free_mb/1024,1) as free_gb,
+                   r.run_timestamp as created_at, r.run_id
+            FROM datastores d
+            JOIN vcenters vc ON d.vcenter_id = vc.vcenter_id
+            JOIN vc_runs r ON d.run_id = r.run_id
+            WHERE d.run_id = (SELECT MIN(d2.run_id) FROM datastores d2 WHERE d2.datastore_name = d.datastore_name)
+              AND r.run_timestamp >= %s
+            UNION ALL
+            SELECT datastore_name, 'Hyper-V' as platform, cluster_name as vcenter_name,
+                   capacity_gb, free_gb, r.run_timestamp, r.run_id
+            FROM hyperv_datastores d
+            JOIN hyperv_runs r ON d.run_id = r.run_id
+            WHERE d.run_id = (SELECT MIN(d2.run_id) FROM hyperv_datastores d2 WHERE d2.datastore_name = d.datastore_name)
+              AND r.run_timestamp >= %s
+            ORDER BY created_at DESC
+        """, (cutoff_date, cutoff_date))
+
+        for row in cursor.fetchall():
+            results.append({
+                'name': row['datastore_name'],
+                'platform': row['platform'],
+                'vcenter': row['vcenter_name'],
+                'capacity_gb': row['capacity_gb'],
+                'free_gb': row['free_gb'],
+                'created_at': str(row['created_at'])[:16],
+                'run_id': row['run_id']
+            })
+
+    cursor.close()
+    conn.close()
+    return jsonify(results)
+
+
+
+
+@app.route("/api/vm/power_on_bulk", methods=["POST"])
+@login_required
+def vm_power_on_bulk():
+    """Power on multiple VMware VMs at once (bulk operation)"""
+    data = request.json
+    vm_names = data.get('vm_names', [])
+    if not vm_names:
+        return jsonify({"success": False, "error": "No VM names provided"}), 400
+
+    results = []
+    for vm_name in vm_names:
+        try:
+            # ======================================================
+            # TODO: Replace with real vCenter power‑on logic
+            # Example using pyvmomi or Ansible:
+            #   power_on_vm(vm_name)
+            # ======================================================
+            results.append({"vm_name": vm_name, "success": True, "message": f"Power-on sent for {vm_name}"})
+        except Exception as e:
+            results.append({"vm_name": vm_name, "success": False, "error": str(e)})
+
+    success_count = sum(1 for r in results if r["success"])
+    return jsonify({
+        "success": True,
+        "total": len(vm_names),
+        "succeeded": success_count,
+        "failed": len(vm_names) - success_count,
+        "details": results
+    })
+
+@app.route("/api/vm/power_off_bulk", methods=["POST"])
+@login_required
+def vm_power_off_bulk():
+    """Power off multiple VMware VMs at once (bulk operation)"""
+    data = request.json
+    vm_names = data.get('vm_names', [])
+    if not vm_names:
+        return jsonify({"success": False, "error": "No VM names provided"}), 400
+
+    results = []
+    for vm_name in vm_names:
+        try:
+            # ======================================================
+            # TODO: Replace with real vCenter power‑off logic
+            # ======================================================
+            results.append({"vm_name": vm_name, "success": True, "message": f"Power-off sent for {vm_name}"})
+        except Exception as e:
+            results.append({"vm_name": vm_name, "success": False, "error": str(e)})
+
+    success_count = sum(1 for r in results if r["success"])
+    return jsonify({
+        "success": True,
+        "total": len(vm_names),
+        "succeeded": success_count,
+        "failed": len(vm_names) - success_count,
+        "details": results
+    })
+
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5001, debug=True, threaded=True)
